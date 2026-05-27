@@ -1,5 +1,12 @@
 import React from "react";
-import { View, Pressable, Platform, Linking, useWindowDimensions } from "react-native";
+import {
+  View,
+  Pressable,
+  Platform,
+  Linking,
+  ScrollView,
+  useWindowDimensions,
+} from "react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,8 +23,10 @@ import { UserAvatar } from "@/components/user-avatar";
 import { useOxy, showSignInModal } from "@oxyhq/services";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
 import { OxySpaceWordmark } from "@/components/ui/oxy-space-wordmark";
+import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { PageTree } from "@/components/pages/page-tree";
 
 /* ================================================================
    Root Sidebar — routes to settings sidebar when on /settings
@@ -103,14 +112,20 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
           paddingBottom: insets.bottom,
         }}
       >
-        {/* Logo */}
-        <Pressable
-          onPress={handleHome}
-          className="h-14 items-center justify-center shrink-0"
-          accessibilityLabel="Home"
-        >
-          <OxySpaceWordmark width={20} color={colors.foreground} />
-        </Pressable>
+        {/* Header: workspace switcher (auth) or logo (unauth) */}
+        <View className="h-14 items-center justify-center shrink-0">
+          {isAuthenticated ? (
+            <WorkspaceSwitcher collapsed />
+          ) : (
+            <Pressable
+              onPress={handleHome}
+              className="h-14 items-center justify-center"
+              accessibilityLabel="Home"
+            >
+              <OxySpaceWordmark width={20} color={colors.foreground} />
+            </Pressable>
+          )}
+        </View>
 
         {/* Spacer */}
         <View className="flex-1" />
@@ -156,17 +171,25 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
       className="flex h-full w-full flex-col bg-background border-r border-border"
       style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
     >
-      {/* Header: logo + collapse button */}
-      <View className="h-14 flex-row items-center shrink-0 px-2">
-        <Pressable
-          onPress={handleHome}
-          className="p-1 mx-0.5 shrink-0 rounded-xl hover:bg-muted"
-          accessibilityLabel="Home"
-        >
-          <OxySpaceWordmark height={24} width={62} color={colors.foreground} />
-        </Pressable>
+      {/* Header: workspace switcher (auth) or logo (unauth) + collapse button */}
+      <View className="h-14 flex-row items-center shrink-0 px-2 gap-1">
+        {isAuthenticated ? (
+          <WorkspaceSwitcher />
+        ) : (
+          <Pressable
+            onPress={handleHome}
+            className="p-1 mx-0.5 shrink-0 rounded-xl hover:bg-muted"
+            accessibilityLabel="Home"
+          >
+            <OxySpaceWordmark
+              height={24}
+              width={62}
+              color={colors.foreground}
+            />
+          </Pressable>
+        )}
         {isLargeScreen && (
-          <View className="ms-auto shrink-0">
+          <View className="shrink-0">
             <Pressable
               onPress={toggleSidebarCollapsed}
               accessibilityLabel="Collapse sidebar"
@@ -178,8 +201,13 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
         )}
       </View>
 
-      {/* Scrollable empty middle — pages/databases land in Phase 1 */}
-      <View className="flex min-h-0 flex-1" />
+      {/* Scrollable middle — Phase 1 page tree (Phase 2 will add workspace switcher above). */}
+      <ScrollView
+        className="min-h-0 flex-1"
+        showsVerticalScrollIndicator={false}
+      >
+        <PageTree />
+      </ScrollView>
 
       {/* Divider */}
       <View className="mx-2 border-t border-border/30" />

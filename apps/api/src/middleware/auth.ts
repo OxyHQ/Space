@@ -4,6 +4,8 @@ import { OxyServices } from '@oxyhq/core';
 import ApiKeyUsage from '../models/api-key-usage.js';
 import { log } from '../lib/logger.js';
 import { getClientIp } from '../lib/net-utils.js';
+import type { WorkspaceDoc } from '../models/workspace.js';
+import type { WorkspaceMemberDoc, WorkspaceRole } from '../models/workspace-member.js';
 
 // Initialize Oxy client
 const OXY_API_URL = process.env.OXY_API_URL || 'https://api.oxy.so';
@@ -28,9 +30,23 @@ declare global {
         appId: string;
         appName: string;
       };
+      /**
+       * Set by `requireWorkspaceMember` (Phase 2 workspaces). When present,
+       * the request was made by a verified member of this workspace.
+       */
+      workspaceDoc?: WorkspaceDoc;
+      /**
+       * Set by `requireWorkspaceMember`. The membership row for `req.user`
+       * within `req.workspaceDoc`, including the caller's role.
+       */
+      member?: WorkspaceMemberDoc;
+      /**
+       * Legacy field set by `resolveWorkspace` (header passthrough). Now
+       * carries the full role union used by the new permissions model.
+       */
       workspace?: {
         id: string | null;
-        role?: 'owner' | 'admin' | 'member';
+        role?: WorkspaceRole;
       };
     }
   }

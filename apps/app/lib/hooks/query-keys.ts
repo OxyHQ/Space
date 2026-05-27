@@ -47,4 +47,11 @@ export const queryKeys = {
     search: (query: string) => ['suggestions', 'search', query] as const,
     me: ['suggestions', 'me'] as const,
   },
+  pages: {
+    list: (workspaceId: string | null) => ['pages', workspaceId] as const,
+    detail: (id: string) => ['page', id] as const,
+  },
+  blocks: {
+    list: (pageId: string) => ['blocks', pageId] as const,
+  },
 } as const;

@@ -132,6 +132,7 @@
     },
     "sections": {
       "account": "Account",
+      "members": "Members",
       "general": "General",
       "usage": "Usage",
       "billing": "Billing",

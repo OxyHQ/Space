@@ -11,6 +11,7 @@ import {
   MessageSquarePlus,
   Shield,
   ArrowLeft,
+  Users,
   type LucideIcon,
 } from "lucide-react-native";
 
@@ -23,6 +24,7 @@ interface SettingsSection {
 
 const SECTIONS: SettingsSection[] = [
   { id: "account", route: "/(app)/settings", icon: User, labelKey: "settings.sections.account" },
+  { id: "members", route: "/(app)/settings/members", icon: Users, labelKey: "settings.sections.members" },
   { id: "general", route: "/(app)/settings/general", icon: Settings2, labelKey: "settings.sections.general" },
   { id: "usage", route: "/(app)/settings/usage", icon: CreditCard, labelKey: "settings.sections.billing" },
   { id: "security", route: "/(app)/settings/security", icon: Shield, labelKey: "settings.sections.security" },
@@ -35,6 +37,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
   const { t } = useTranslation();
 
   const activeId = React.useMemo(() => {
+    if (pathname.includes("/settings/members")) return "members";
     if (pathname.includes("/settings/general")) return "general";
     if (pathname.includes("/settings/usage")) return "usage";
     if (pathname.includes("/settings/security")) return "security";

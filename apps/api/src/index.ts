@@ -22,6 +22,10 @@ import internalRouter from './routes/internal.js';
 import analyticsRouter from './routes/analytics.js';
 import webhooksRouter from './routes/webhooks.js';
 import notificationsRouter from './routes/notifications.js';
+import workspacesRouter from './routes/workspaces.js';
+import shareLinksRouter from './routes/share-links.js';
+import pagesRouter from './routes/pages.js';
+import blocksRouter from './routes/blocks.js';
 
 // Register hooks (side-effect import)
 import './lib/hooks/index.js';
@@ -163,6 +167,10 @@ app.use('/models', modelsStatsRouter);
 app.use('/analytics', analyticsRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/notifications', notificationsRouter);
+app.use('/api/workspaces', workspacesRouter);
+app.use('/api/pages', pagesRouter);
+app.use('/api', shareLinksRouter);
+app.use('/api', blocksRouter);
 app.use('/internal', internalRouter);
 
 // Root route
@@ -183,6 +191,10 @@ app.get('/', (_req, res) => {
       '/analytics',
       '/webhooks',
       '/notifications',
+      '/api/workspaces',
+      '/api/pages',
+      '/api/blocks',
+      '/api/share',
       '/internal',
     ]
   });

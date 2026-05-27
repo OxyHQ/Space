@@ -147,6 +147,23 @@ export const API_ROUTES = {
     threats: '/audit/threats',
   },
 
+  // Pages routes (Phase 1)
+  pages: {
+    list: '/pages',
+    create: '/pages',
+    get: (id: string) => `/pages/${id}`,
+    update: (id: string) => `/pages/${id}`,
+    delete: (id: string) => `/pages/${id}`,
+    blocks: (id: string) => `/pages/${id}/blocks`,
+  },
+
+  // Blocks routes (Phase 1)
+  blocks: {
+    update: (id: string) => `/blocks/${id}`,
+    delete: (id: string) => `/blocks/${id}`,
+    reorder: (pageId: string) => `/pages/${pageId}/blocks/reorder`,
+  },
+
   // Health check
   health: '/health',
 
