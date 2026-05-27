@@ -1,10 +1,10 @@
 {
-  "name": "@clarity/app",
+  "name": "@oxyspace/app",
   "main": "index",
   "version": "1.0.0",
   "scripts": {
     "start": "expo start --clear --tunnel",
-    "dev": "expo start --scheme clarity",
+    "dev": "expo start --scheme oxyspace",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",

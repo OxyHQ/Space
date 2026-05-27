@@ -101,11 +101,7 @@ export default function NotificationsScreen() {
     if (notification.status !== 'read') {
       markAsRead.mutate(notification._id);
     }
-    // If the notification has a conversationId, navigate to that conversation
-    if (notification.conversationId) {
-      router.push(`/(app)/c/${notification.conversationId}`);
-    }
-  }, [markAsRead, router]);
+  }, [markAsRead]);
 
   const notifications = data?.notifications || [];
   const unreadCount = data?.unreadCount || 0;
@@ -187,7 +183,7 @@ export default function NotificationsScreen() {
           <Bell size={32} className="text-muted-foreground mb-3" />
           <Text className="text-base font-medium text-foreground mb-1">No notifications yet</Text>
           <Text className="text-sm text-muted-foreground text-center">
-            Set up triggers and routines to get proactive updates from Clarity.
+            Set up triggers and routines to get proactive updates from Oxy Space.
           </Text>
         </View>
       ) : (

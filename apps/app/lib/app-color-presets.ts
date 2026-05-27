@@ -9,8 +9,8 @@ function extractSat(hslVar: string): number {
   return parseInt(hslVar.split(' ')[1], 10);
 }
 
-/** Bloom's CSS vars extended with Clarity-specific vars (card, chart, sidebar-*). */
-export function getClarityVars(
+/** Bloom's CSS vars extended with Oxy Space-specific vars (card, chart, sidebar-*). */
+export function getAppColorVars(
   colorName: AppColorName,
   mode: 'light' | 'dark',
 ): Record<string, string> {
@@ -46,7 +46,7 @@ export function applyAppColorToDocument(
 ) {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return;
 
-  const vars = getClarityVars(colorName, resolvedMode);
+  const vars = getAppColorVars(colorName, resolvedMode);
   Object.entries(vars).forEach(([key, value]) => {
     document.documentElement.style.setProperty(key, value);
   });

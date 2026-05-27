@@ -1,36 +1,35 @@
-# Contributing to Clarity
+# Contributing to Oxy Space
 
 ## Prerequisites
 
-- **Node.js 22** (use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm))
+- **Bun** (https://bun.sh — use `bun`, not npm or yarn)
 - **MongoDB** (local or Atlas)
-- **Redis** (optional, falls back gracefully)
+- **Redis / Valkey** (optional, falls back gracefully)
 
 ## Getting Started
 
 ```bash
 git clone <repo-url> && cd Clarity
-npm install              # installs all workspaces
-cp apps/api/.env.example apps/api/.env   # fill in your values
-npm run dev              # starts all services
+bun install                                # installs all workspaces
+cp apps/api/example.env apps/api/.env      # fill in your values
+bun run dev                                # starts all services
 ```
 
 Focused commands:
 
 ```bash
-npm run dev:api          # API only
-npm run dev:app          # Expo app only
+bun run dev:api          # API only
+bun run dev:app          # Expo app only
 ```
 
 ## Monorepo Structure
 
-This is an **npm workspaces** monorepo (no Turborepo/Nx).
+This is a **Bun workspaces** monorepo.
 
 | App | Stack | Purpose |
 | --- | --- | --- |
 | `apps/api` | Express + TypeScript | Core API runtime |
 | `apps/app` | Expo 55 (React Native + Web) | Main app (web + iOS + Android) |
-| `apps/clarity-api` | (deprecated) | (removed) |
 
 ## Branch Naming
 
@@ -40,57 +39,53 @@ fix/short-description
 refactor/short-description
 ```
 
-Always branch from `main`.
+Always branch from `master`.
 
 ## Commit Messages
 
 Use [conventional commits](https://www.conventionalcommits.org/):
 
 ```
-feat: add trigger scheduling UI
+feat: add workspace page tree
 fix: correct token refresh race condition
-refactor: extract chat handler into shared module
+refactor: extract sidebar into shared module
 docs: update deployment guide
-test: add integration tests for context graph
+test: add integration tests
 chore: bump dependencies
 ```
 
 ## Pull Request Process
 
-1. Create a branch from `main` with the naming convention above.
-2. Keep PRs focused -- one feature or fix per PR.
+1. Create a branch from `master` with the naming convention above.
+2. Keep PRs focused — one feature or fix per PR.
 3. Write a descriptive PR summary (what changed and why).
 4. Ensure CI passes before requesting review.
 5. Request review from at least one team member.
 
 ## Code Style
 
-- **TypeScript strict mode** encouraged. Avoid `any` -- use proper types.
+- **TypeScript strict mode**. Never use `as any`, `@ts-ignore`, or `!` non-null assertions — fix the actual type.
 - **Frontend styling**: NativeWind (Tailwind). No inline style objects unless necessary.
-- **State management**: Zustand stores. Data fetching via TanStack Query.
+- **State management**: Zustand for client state. TanStack Query for server state.
 - **Routing**: expo-router (file-based) in `apps/app`.
-- Follow existing patterns in the codebase. When in doubt, look at neighboring files.
+- Avoid `useEffect` where derived state, event handlers, or query hooks fit better.
+- Follow existing patterns in the codebase.
 
 ## Testing
 
 Run API tests before submitting:
 
 ```bash
-npm test -w @clarity/api
+bun test --filter @oxyspace/api
 ```
 
 Tests use **Vitest**. Place test files next to source as `*.test.ts`.
 
 ## Key Conventions
 
-### Model Abstraction (Critical)
+### Internal AI provider routing
 
-Clarity wraps multiple AI providers behind branded model names. **Never expose provider names or model IDs** (OpenAI, Anthropic, `gpt-4o`, `claude-sonnet-4`, etc.) in:
-
-- UI text, error messages, API responses
-- Documentation, comments, or marketing copy
-
-Always use Clarity model names: `clarity-v1`, `clarity-fast`, `clarity-v1-pro`, `clarity-v1-thinking`, etc.
+The legacy AI provider routing layer is internal-only (Phase 5, not exposed to end users). Never expose provider names or provider model IDs (OpenAI, Anthropic, `gpt-4o`, `claude-sonnet-4`, etc.) in UI text, error messages, API responses, documentation, or marketing copy.
 
 ### Error Handling
 
@@ -98,4 +93,4 @@ Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for all user-
 
 ### Database
 
-MongoDB with Mongoose. Database name follows `clarity-{NODE_ENV}` convention. Connection URI is shared across the Oxy ecosystem -- the `dbName` is passed to `mongoose.connect()`, not embedded in the URI.
+MongoDB with Mongoose. Database name follows `oxyspace-{NODE_ENV}` convention. Connection URI is shared across the Oxy ecosystem — the `dbName` is passed to `mongoose.connect()`, not embedded in the URI.

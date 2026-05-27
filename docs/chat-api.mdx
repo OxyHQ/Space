@@ -1,18 +1,20 @@
 ---
-title: Chat API
-description: OpenAI-compatible POST /v1/chat/completions with SSE streaming, deep research, and Clarity-specific events.
+title: Chat API (legacy)
+description: Legacy chat-product Chat API. Not exposed in the Oxy Space user surface.
 order: 1
 ---
 
-# Chat API
+# Chat API (legacy)
 
-Clarity exposes an OpenAI-compatible `/v1/chat/completions` endpoint over Server-Sent Events. The wire format is a superset of OpenAI's: standard `delta` chunks stream verbatim, augmented with named `clarity.*` events for research progress, citations, approvals, and reasoning traces.
+> This documents the legacy Clarity AI chat product API. The endpoints remain mounted internally for compatibility but are not part of the Oxy Space user-facing surface. Phase 5 (Hub AI) will define the workspace-native AI API.
+
+The legacy runtime exposes an OpenAI-compatible `/v1/chat/completions` endpoint over Server-Sent Events. The wire format is a superset of OpenAI's: standard `delta` chunks stream verbatim, augmented with named `clarity.*` events for research progress, citations, approvals, and reasoning traces.
 
 ## Endpoint
 
 ```
-POST https://api.clarity.surf/v1/chat/completions
-POST https://api.clarity.surf/clarity/search       (alias, same runtime)
+POST https://api.space.oxy.so/v1/chat/completions
+POST https://api.space.oxy.so/clarity/search       (alias, same runtime)
 ```
 
 Both endpoints accept the same payload and emit the same events. `/clarity/search` exists for symmetry with the user-facing surface name.
@@ -56,7 +58,7 @@ Unknown fields are accepted but ignored. The model id **must** be a Clarity tier
 ## Minimal example
 
 ```ts
-const res = await fetch('https://api.clarity.surf/v1/chat/completions', {
+const res = await fetch('https://api.space.oxy.so/v1/chat/completions', {
   method: 'POST',
   headers: {
     'Authorization': `Bearer ${process.env.CLARITY_API_KEY}`,
@@ -145,7 +147,7 @@ When the runtime selects an `R2` action (external impact, e.g. sending an email 
 ```ts
 import { io } from 'socket.io-client';
 
-const socket = io('https://api.clarity.surf', {
+const socket = io('https://api.space.oxy.so', {
   auth: { token: oxyJwt },
 });
 

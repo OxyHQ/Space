@@ -31,10 +31,10 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Lint API
-        run: bun run --filter @clarity/api lint
+        run: bun run --filter @oxyspace/api lint
 
       - name: Run API tests
-        run: bun run --filter @clarity/api test
+        run: bun run --filter @oxyspace/api test
 
   build-api:
     name: Build API

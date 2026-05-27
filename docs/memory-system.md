@@ -1,8 +1,10 @@
-# Memory and Context Graph
+# Memory and Context Graph (legacy chat-product reference)
 
 Last updated: 2026-03-07
 
-Clarity uses two complementary persistence layers:
+> Carry-over from the legacy Clarity AI chat product. Not exposed in the Oxy Space user surface.
+
+The legacy chat runtime uses two complementary persistence layers:
 
 1. **User memory profile** (preferences + long-term facts).
 2. **Context graph** (where to look, what worked, and why).

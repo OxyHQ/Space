@@ -1,11 +1,13 @@
-# DigitalOcean App Platform spec for clarity-production
+# DigitalOcean App Platform spec for oxyspace-production
 # NOTE: Infrastructure is now managed by SST (sst.config.ts).
 # This file is kept as a reference / fallback.
-name: clarity-production
+# WARNING: Renaming the live App Platform app or bucket below may cause downtime
+# or orphan existing infra. Coordinate any live-infra changes with operations.
+name: oxyspace-production
 region: ams
 
 services:
-  - name: clarity-api
+  - name: oxyspace-api
     github:
       repo: OxyHQ/Clarity
       branch: main
@@ -42,7 +44,7 @@ services:
       - key: SERVICE_SECRET
         type: SECRET
       - key: WEB_URL
-        value: "https://clarity.surf"
+        value: "https://space.oxy.so"
       # S3/Spaces
       - key: AWS_REGION
         value: "ams3"
@@ -53,7 +55,7 @@ services:
       - key: AWS_ENDPOINT_URL
         value: "https://ams3.digitaloceanspaces.com"
       - key: AWS_S3_BUCKET
-        value: "bucket-clarity"
+        value: "bucket-oxyspace"
       # Stripe
       - key: STRIPE_SECRET_KEY
         type: SECRET
@@ -70,7 +72,7 @@ services:
         value: "wss://livekit.oxy.so"
 
 static_sites:
-  - name: clarity-app
+  - name: oxyspace-app
     github:
       repo: OxyHQ/Clarity
       branch: main
@@ -96,12 +98,12 @@ databases:
     cluster_name: db-valkey-ams3-04785
 
 domains:
-  - domain: clarity.surf
+  - domain: space.oxy.so
     type: PRIMARY
-    zone: clarity.surf
-  - domain: api.clarity.surf
+    zone: oxy.so
+  - domain: api.space.oxy.so
     type: ALIAS
-    zone: clarity.surf
+    zone: oxy.so
 
 alerts:
   - rule: DEPLOYMENT_FAILED

@@ -1,6 +1,6 @@
 /**
- * Auto-generated sitemap.xml for Clarity
- * Ejecutar: npm run generate-sitemap
+ * Auto-generated sitemap.xml for Oxy Space
+ * Run: bun run generate-sitemap
  */
 
 import fs from 'fs';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SITE_URL = 'https://clarity.oxy.so';
+const SITE_URL = 'https://space.oxy.so';
 const CURRENT_DATE = new Date().toISOString().split('T')[0];
 
 interface SitemapURL {
@@ -20,7 +20,6 @@ interface SitemapURL {
   priority: number;
 }
 
-// Rutas estáticas existentes
 const staticRoutes: SitemapURL[] = [
   {
     loc: '/',
@@ -85,26 +84,22 @@ function generateSitemapXML(urls: SitemapURL[]): string {
 }
 
 async function generateSitemap() {
-  console.log('🗺️  Generating sitemap.xml for Clarity...');
+  console.log('Generating sitemap.xml for Oxy Space...');
 
   const sitemapXML = generateSitemapXML(staticRoutes);
 
-  // Save to /public
   const publicPath = path.resolve(__dirname, '../public/sitemap.xml');
   fs.writeFileSync(publicPath, sitemapXML, 'utf-8');
-  console.log(`✅ Sitemap generated: ${publicPath}`);
+  console.log(`Sitemap generated: ${publicPath}`);
 
-  // Also save to /dist if it exists
   const distPath = path.resolve(__dirname, '../dist/sitemap.xml');
   const distDir = path.dirname(distPath);
   if (fs.existsSync(distDir)) {
     fs.writeFileSync(distPath, sitemapXML, 'utf-8');
-    console.log(`✅ Sitemap copied to: ${distPath}`);
+    console.log(`Sitemap copied to: ${distPath}`);
   }
 
-  console.log(`\n📊 Total URLs in sitemap: ${staticRoutes.length}`);
-  console.log('🎉 Sitemap generated successfully!');
+  console.log(`Total URLs in sitemap: ${staticRoutes.length}`);
 }
 
-// Execute
 generateSitemap().catch(console.error);

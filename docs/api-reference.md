@@ -1,10 +1,12 @@
-# Clarity API Reference
+# Oxy Space API Reference
 
 Last updated: 2026-03-07
 
+> Note: The legacy chat / model / agent endpoints documented below were part of the previous Clarity AI chat product. They remain mounted internally during the Phase 0 strip but are not part of the Oxy Space user-facing surface.
+
 ## Base URL
 
-`https://api.clarity.oxy.so`
+`https://api.space.oxy.so`
 
 ## Authentication
 

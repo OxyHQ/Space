@@ -1,44 +1,17 @@
-import { useModelStore } from "@/lib/stores/model-store";
-import { useChatConversation } from "@/hooks/useChatConversation";
-import { ChatPageContent } from "@/components/chat-page-content";
-import Head from "expo-router/head";
+import { View } from "react-native";
+import { Text } from "@/components/ui/text";
 
-const SearchPage = () => {
-  const selectedModel = useModelStore((s) => s.selectedModel);
-  const setSelectedModel = useModelStore((s) => s.setSelectedModel);
-
-  const {
-    messages,
-    isLoading,
-    scrollViewRef,
-    createNewConversation,
-    editMessage,
-    clearConversation,
-  } = useChatConversation({ selectedModel });
-
+export default function HomePage() {
   return (
-    <>
-      <Head>
-        <title>Clarity | AI Search by Oxy</title>
-        <meta name="description" content="Clarity is an AI-powered search engine by Oxy. Get answers with source citations, deep research, and follow-up questions." />
-        <link rel="canonical" href="https://clarity.oxy.so/" />
-        <meta property="og:title" content="Clarity | AI Search by Oxy" />
-        <meta property="og:description" content="Clarity is an AI-powered search engine by Oxy. Get answers with source citations, deep research, and follow-up questions." />
-        <meta property="og:image" content="https://clarity.oxy.so/og-image-default.png" />
-      </Head>
-      <ChatPageContent
-        messages={messages}
-        scrollViewRef={scrollViewRef}
-        isLoading={isLoading}
-        onSubmit={createNewConversation}
-        onSuggestionPress={createNewConversation}
-        onEditMessage={editMessage}
-        onClear={clearConversation}
-        selectedModel={selectedModel}
-        onModelChange={setSelectedModel}
-      />
-    </>
+    <View className="flex-1 items-center justify-center bg-background px-6">
+      <View className="max-w-md items-center gap-3">
+        <Text className="text-3xl font-semibold text-foreground text-center">
+          Oxy Space
+        </Text>
+        <Text className="text-base text-muted-foreground text-center">
+          Your workspace is empty. Pages and databases land in Phase 1.
+        </Text>
+      </View>
+    </View>
   );
-};
-
-export default SearchPage;
+}

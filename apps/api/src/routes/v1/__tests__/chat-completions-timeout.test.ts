@@ -123,7 +123,6 @@ vi.mock('../../../lib/tools/index.js', () => ({
   generateFileTool: { execute: vi.fn() },
   createSearchAgentsTool: vi.fn(() => ({ execute: vi.fn() })),
   createDelegateToAgentTool: vi.fn(() => ({ execute: vi.fn() })),
-  createDeepResearchTool: vi.fn(() => ({ execute: vi.fn() })),
   createSwitchModelTool: vi.fn(() => ({ execute: vi.fn() })),
   createAgentTool: vi.fn(() => ({ execute: vi.fn() })),
   createPlanPreviewTool: vi.fn(() => ({ execute: vi.fn() })),
@@ -219,10 +218,6 @@ vi.mock('../../../lib/logger.js', () => {
 
 vi.mock('../../../lib/observability/index.js', () => ({
   recordEvent: vi.fn(),
-}));
-
-vi.mock('../../../lib/research/research-engine.js', () => ({
-  runDeepResearch: vi.fn(),
 }));
 
 vi.mock('../../../lib/autonomy/runtime.js', () => ({

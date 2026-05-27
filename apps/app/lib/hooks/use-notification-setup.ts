@@ -9,7 +9,6 @@ import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
-import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useOxy } from '@oxyhq/services';
 import { io as socketIO } from 'socket.io-client';
@@ -22,7 +21,6 @@ const PROJECT_ID =
 
 export function useNotificationSetup() {
   const { user, isAuthenticated } = useOxy();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const tokenRef = useRef<string | null>(null);
   const webPushRegisteredRef = useRef(false);
@@ -87,20 +85,16 @@ export function useNotificationSetup() {
     };
   }, [isAuthenticated, user?.id]);
 
-  // ── Notification tap handler (deep-link to conversation) ───────
+  // ── Notification tap handler (deep-link target will be re-added in Phase 1) ───────
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
+      () => {
         if (!isAuthenticated) return;
-        const data = response.notification.request.content.data;
-        if (data?.conversationId) {
-          router.push(`/(app)/c/${data.conversationId}`);
-        }
       },
     );
 
     return () => subscription.remove();
-  }, [router, isAuthenticated]);
+  }, [isAuthenticated]);
 
   // ── Web push registration (browser only) ──────────────────────
   useEffect(() => {

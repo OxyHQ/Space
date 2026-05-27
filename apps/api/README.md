@@ -1,81 +1,17 @@
-# Clarity API
+# Oxy Space API
 
-Express + TypeScript API for Clarity autonomy runtime.
+Express + TypeScript backend for Oxy Space.
 
-## What Is Live
+## Tech
 
-- Single chat runtime for all surfaces (`/clarity/search` and `/v1/chat/completions`).
-- Autonomy loop with intent classification and context-graph recall.
-- Trigger engine (`/triggers`) for schedule, webhook, integration event, and agent heartbeat tasks.
-- Oxy service event ingestion with idempotency and autonomous session creation.
-- Governance by risk level (`R0` read, `R1` reversible write + rollback record, `R2` approval required, `R3` blocked).
-- Public model abstraction: only Clarity model IDs are exposed.
-
-## Runtime Flow
-
-1. Classify intent.
-2. Recall ranked sources and learning rules.
-3. Retrieve context.
-4. Execute with tools.
-5. Persist learnings and source quality.
-
-## Core Modules
-
-- `src/routes/v1/chat-completions.ts` - Unified chat handler.
-- `src/lib/autonomy/runtime.ts` - Before/after chat autonomy orchestration.
-- `src/lib/autonomy/context-graph.ts` - Recall/learning engine.
-- `src/lib/agent/governance.ts` - Risk policy and rollback registration.
-- `src/lib/agent/action-approval.ts` - Approval request/decision lifecycle.
-- `src/lib/trigger-engine.ts` - Unified trigger scheduler/executor.
-- `src/routes/oxy-service-events.ts` - Oxy event webhook + autonomous execution.
-
-## Public Endpoints
-
-### Chat
-
-- `POST /clarity/search`
-- `POST /v1/chat/completions`
-- `POST /v1/responses`
-- `GET /v1/models`
-- `GET /v1/models/:modelId`
-
-### Triggers
-
-- `GET /triggers`
-- `POST /triggers`
-- `GET /triggers/:id`
-- `PATCH /triggers/:id`
-- `DELETE /triggers/:id`
-- `POST /triggers/:id/run`
-- `GET /triggers/:id/executions`
-- `POST /triggers/:id/regenerate-token`
-- `POST /triggers/webhook/:token`
-
-### Oxy Event Ingestion
-
-- `POST /webhooks/oxy/:serviceId`
-
-### Removed (hard cut)
-
-- `POST /v1/resolve-model` -> `410`
-- `POST /v1/report-usage` -> `410`
-- `POST /codea/resolve-model` -> `410`
-- `POST /codea/report-usage` -> `410`
-- All `/automations*` routes removed.
-
-## Streaming Event Contract (`eventVersion: 1`)
-
-Named SSE events used by all clients:
-
-- `clarity.plan_preview`
-- `clarity.approval_request`
-- `clarity.approval_result`
-- `clarity.research_progress`
-- `clarity.agent_session`
-- `clarity.reasoning`
-- `clarity.tool_result`
-- `clarity.title`
-- `clarity.model_switch`
+- Express + TypeScript
+- MongoDB + Mongoose (shared `db-oxy` cluster, app database `oxyspace-{NODE_ENV}`)
+- Redis (Valkey) for rate limits, caching, Socket.IO scale-out
+- Socket.IO for real-time events
+- BullMQ for async jobs
+- DigitalOcean Spaces (S3-compatible) for file uploads
+- Stripe for billing
+- Internal AI provider routing (Phase 5, not user-visible)
 
 ## Development
 
@@ -83,7 +19,7 @@ Named SSE events used by all clients:
 # from repo root
 bun run dev:api
 
-# or from apps/api
+# from apps/api
 bun run dev
 ```
 
@@ -96,7 +32,7 @@ bun run start
 
 ## Environment
 
-Use `apps/api/example.env` as baseline.
+Use `apps/api/example.env` as the baseline.
 
 Key groups:
 
@@ -109,5 +45,6 @@ Key groups:
 
 ## Notes
 
-- Keep all user-facing errors sanitized.
-- Never expose internal model-routing details in public responses or logs.
+- All user-facing errors must be sanitized via `apps/api/src/lib/errors/sanitize.ts`.
+- Internal model-routing details (provider names, provider model IDs) must never leak in public responses or logs.
+- The legacy `/clarity/search` and `/v1/chat/completions` chat endpoints remain mounted while Phase 5 (Hub AI) is internal-only; they are not surfaced in the Oxy Space UI.

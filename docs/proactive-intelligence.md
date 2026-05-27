@@ -1,8 +1,10 @@
-# Proactive Intelligence
+# Proactive Intelligence (legacy chat-product reference)
 
 Last updated: 2026-03-07
 
-Clarity proactive intelligence is built on `triggers` + autonomy runtime + policy controls.
+> Carry-over from the legacy Clarity AI chat product. Not exposed in the Oxy Space user surface.
+
+The legacy proactive-intelligence system is built on `triggers` + autonomy runtime + policy controls.
 
 ## Architecture
 

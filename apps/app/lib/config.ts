@@ -9,8 +9,8 @@ import { Platform } from 'react-native';
 
 // Default API URLs for different environments
 export const DEV_API_BASE_URL = 'http://nate:3001';
-export const STAGING_API_BASE_URL = 'https://staging-api.clarity.oxy.so';
-export const PROD_API_BASE_URL = 'https://api.clarity.oxy.so';
+export const STAGING_API_BASE_URL = 'https://staging-api.space.oxy.so';
+export const PROD_API_BASE_URL = 'https://api.space.oxy.so';
 
 const ENV = {
   dev: {

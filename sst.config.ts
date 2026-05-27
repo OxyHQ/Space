@@ -1,7 +1,7 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 /**
- * Clarity SST Infrastructure
+ * Oxy Space SST Infrastructure
  *
  * Manages:
  * - DigitalOcean App Platform (API service + static frontend)
@@ -13,12 +13,17 @@
  * Auth:
  *   export DIGITALOCEAN_TOKEN=dop_v1_...
  *   export CLOUDFLARE_API_TOKEN=...
+ *
+ * LIVE-INFRA NOTE: Renaming the SST app name, the DO App Platform app, or the
+ * Spaces bucket name causes SST to provision NEW resources and orphan the old
+ * ones (this can lose data and require manual cleanup). Coordinate any live
+ * production rename with operations and migrate file contents first.
  */
 
 export default $config({
   app(input) {
     return {
-      name: "clarity",
+      name: "oxyspace",
       home: "local",
       removal: input.stage === "production" ? "retain" : "remove",
       providers: {
@@ -35,14 +40,14 @@ export default $config({
     // -------------------------------------------------------
     // DigitalOcean Spaces bucket for file uploads
     // -------------------------------------------------------
-    const bucket = new digitalocean.SpacesBucket("ClarityBucket", {
-      name: isProd ? "bucket-clarity" : `bucket-clarity-${$app.stage}`,
+    const bucket = new digitalocean.SpacesBucket("OxySpaceBucket", {
+      name: isProd ? "bucket-oxyspace" : `bucket-oxyspace-${$app.stage}`,
       region,
       acl: "private",
     });
 
     // CORS for the bucket
-    new digitalocean.SpacesBucketCorsConfiguration("ClarityBucketCors", {
+    new digitalocean.SpacesBucketCorsConfiguration("OxySpaceBucketCors", {
       bucket: bucket.id,
       region,
       corsRules: [
@@ -50,7 +55,7 @@ export default $config({
           allowedHeaders: ["*"],
           allowedMethods: ["GET", "PUT", "POST", "DELETE", "HEAD"],
           allowedOrigins: isProd
-            ? ["https://clarity.surf", "https://api.clarity.surf"]
+            ? ["https://space.oxy.so", "https://api.space.oxy.so"]
             : ["*"],
           maxAgeSeconds: 3600,
         },
@@ -60,15 +65,15 @@ export default $config({
     // -------------------------------------------------------
     // DigitalOcean App Platform
     // -------------------------------------------------------
-    const app = new digitalocean.App("ClarityApp", {
+    const app = new digitalocean.App("OxySpaceApp", {
       spec: {
-        name: isProd ? "clarity-production" : `clarity-${$app.stage}`,
+        name: isProd ? "oxyspace-production" : `oxyspace-${$app.stage}`,
         region: "ams",
 
         // --- API service ---
         services: [
           {
-            name: "clarity-api",
+            name: "oxyspace-api",
             github: {
               repo: "OxyHQ/Clarity",
               branch: isProd ? "main" : $app.stage,
@@ -104,8 +109,8 @@ export default $config({
               {
                 key: "WEB_URL",
                 value: isProd
-                  ? "https://clarity.surf"
-                  : `https://${$app.stage}.clarity.surf`,
+                  ? "https://space.oxy.so"
+                  : `https://${$app.stage}.space.oxy.so`,
               },
               // S3/Spaces
               { key: "AWS_REGION", value: region },
@@ -131,7 +136,7 @@ export default $config({
         // --- Static frontend ---
         staticSites: [
           {
-            name: "clarity-app",
+            name: "oxyspace-app",
             github: {
               repo: "OxyHQ/Clarity",
               branch: isProd ? "main" : $app.stage,
@@ -170,8 +175,8 @@ export default $config({
         // --- Domains ---
         ...(isProd && {
           domains: [
-            { domain: "clarity.surf", type: "PRIMARY", zone: "clarity.surf" },
-            { domain: "api.clarity.surf", type: "ALIAS", zone: "clarity.surf" },
+            { domain: "space.oxy.so", type: "PRIMARY", zone: "oxy.so" },
+            { domain: "api.space.oxy.so", type: "ALIAS", zone: "oxy.so" },
           ],
         }),
 

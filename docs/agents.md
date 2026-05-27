@@ -1,8 +1,10 @@
-# Clarity Agents
+# Agents (legacy chat-product reference)
 
 Last updated: 2026-03-07
 
-Clarity runs as a context-agent system that prioritizes autonomous retrieval and policy-safe execution.
+> The agent runtime described below is from the previous Clarity AI chat product. The current Oxy Space surface does not expose agents to end users; Phase 5 (Hub AI) will revisit how AI is surfaced inside the workspace.
+
+Oxy Space's legacy chat runtime is a context-agent system that prioritizes autonomous retrieval and policy-safe execution.
 
 ## Execution Loop
 

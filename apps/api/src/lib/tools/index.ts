@@ -1,4 +1,4 @@
-// Clarity AI Tools
+// AI Tools
 // Export all available tools for use in chat endpoints
 // Tools are registered in the registry for dynamic resolution by plan and capabilities
 
@@ -62,9 +62,6 @@ export { webSearchTool, type WebSearchResult, type WebSearchResponse } from './w
 export { webScraperTool } from './web-scraper.js';
 export { browseTool } from './browse.js';
 export { generateFileTool } from './file-generator.js';
-
-// Deep research tool (AI-callable)
-export { createDeepResearchTool } from './deep-research.js';
 
 // Registry API exports
 export {

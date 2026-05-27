@@ -12,7 +12,7 @@
 import { type ToolSet } from 'ai';
 import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } from '../lib/chat-core.js';
 import { markKeyCreditExhausted, getClarityModel, getModelMappingsForTier } from '../lib/gateway-client.js';
-import { getCurrentDateTool, webSearchTool, browseTool, webScraperTool, generateFileTool, createDeepResearchTool } from '../lib/tools/index.js';
+import { getCurrentDateTool, webSearchTool, browseTool, webScraperTool, generateFileTool } from '../lib/tools/index.js';
 import { oxyClient } from '../middleware/auth.js';
 import type { User as OxyUser } from '@oxyhq/core';
 import { getOrCreateUserCredits } from '../lib/user-credits-helpers.js';
@@ -161,16 +161,13 @@ export interface BuildToolsOptions {
   userId?: string;
 }
 
-export async function buildChatTools(opts: BuildToolsOptions): Promise<ToolSet> {
+export async function buildChatTools(_opts: BuildToolsOptions): Promise<ToolSet> {
   const tools: ToolSet = {
     getCurrentDate: getCurrentDateTool,
     webSearch: webSearchTool,
     webScraper: webScraperTool,
     browse: browseTool,
     generateFile: generateFileTool,
-    ...(opts.userId ? {
-      deepResearch: createDeepResearchTool(opts.userId),
-    } : {}),
   };
 
   return tools;

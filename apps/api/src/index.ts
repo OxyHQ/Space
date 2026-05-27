@@ -21,12 +21,10 @@ import modelsStatsRouter from './routes/models-stats.js';
 import internalRouter from './routes/internal.js';
 import analyticsRouter from './routes/analytics.js';
 import webhooksRouter from './routes/webhooks.js';
-import suggestionsRouter from './routes/suggestions.js';
 import notificationsRouter from './routes/notifications.js';
 
 // Register hooks (side-effect import)
 import './lib/hooks/index.js';
-import { seedSuggestions } from './lib/seed-suggestions.js';
 import { warmupProviders } from './lib/provider-warmup.js';
 // Socket.io
 import { initSocket } from './socket.js';
@@ -85,9 +83,9 @@ app.use('/v1', (_req, res, next) => {
 
 // Internal routes - restricted to known origins
 const PRODUCTION_ORIGINS = [
-  'https://clarity.oxy.so',
-  'https://console.clarity.oxy.so',
-  'https://gateway.clarity.oxy.so',
+  'https://space.oxy.so',
+  'https://console.space.oxy.so',
+  'https://gateway.space.oxy.so',
 ];
 
 const DEV_ORIGINS = [
@@ -164,14 +162,13 @@ app.use('/feedback', feedbackRouter);
 app.use('/models', modelsStatsRouter);
 app.use('/analytics', analyticsRouter);
 app.use('/webhooks', webhooksRouter);
-app.use('/suggestions', suggestionsRouter);
 app.use('/notifications', notificationsRouter);
 app.use('/internal', internalRouter);
 
 // Root route
 app.get('/', (_req, res) => {
   res.json({
-    message: 'Clarity API',
+    message: 'Oxy Space API',
     version: '1.0.0',
     endpoints: [
       '/health',
@@ -185,7 +182,6 @@ app.get('/', (_req, res) => {
       '/models',
       '/analytics',
       '/webhooks',
-      '/suggestions',
       '/notifications',
       '/internal',
     ]
@@ -232,11 +228,9 @@ process.on('uncaughtException', (error) => {
 connectDB()
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 API Server running on http://0.0.0.0:${PORT}`);
-      // Seed suggestions (non-blocking)
-      seedSuggestions().catch((err) => console.error('[Suggestions] Seed error:', err));
+      log.general.info({ port: PORT }, 'API server listening');
       // Pre-warm TLS connections to AI providers (non-blocking)
-      warmupProviders().catch((err) => console.error('[Warmup] Provider warmup error:', err));
+      warmupProviders().catch((err) => log.general.error({ err }, '[Warmup] Provider warmup error'));
       // Verify Redis connectivity (non-blocking)
       import('./lib/redis.js').then(({ getRedisClient }) => {
         const redis = getRedisClient();

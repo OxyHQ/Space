@@ -1,6 +1,8 @@
-# Clarity AI Developers Portal
+# Oxy Space Developers Portal
 
-A comprehensive developer portal that allows users to create applications and generate API tokens to integrate Clarity AI into their own applications.
+> Note: This portal originally targeted the legacy Clarity AI chat product. It remains documented while the API endpoints are still mounted, but the chat-product features are not part of the Oxy Space user-facing surface.
+
+A developer portal that allows users to create applications and generate API tokens to integrate with the API exposed by this repo.
 
 ## Features
 
@@ -153,7 +155,7 @@ A comprehensive developer portal that allows users to create applications and ge
 Auth: Service tokens only (via `oxyServiceAuth`). No credits charged.
 
 ```bash
-curl -X POST https://api.clarity.oxy.so/internal/trigger \
+curl -X POST https://api.space.oxy.so/internal/trigger \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Oxy-User-Id: <userId>" \
   -H "Content-Type: application/json" \
@@ -245,7 +247,7 @@ Added "Developers" link to sidebar navigation with Code icon.
 
 3. **Use the API Key**
    ```bash
-   curl -X POST https://api.clarity.oxy.so/v1/chat/completions \
+   curl -X POST https://api.space.oxy.so/v1/chat/completions \
      -H "Authorization: Bearer clarity_sk_your_api_key_here" \
      -H "Content-Type: application/json" \
      -d '{
@@ -267,7 +269,7 @@ Added "Developers" link to sidebar navigation with Code icon.
 
 ```javascript
 // Using fetch
-const response = await fetch('https://api.clarity.oxy.so/v1/chat/completions', {
+const response = await fetch('https://api.space.oxy.so/v1/chat/completions', {
   method: 'POST',
   headers: {
     'Authorization': 'Bearer clarity_sk_your_key_here',

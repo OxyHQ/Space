@@ -7,12 +7,12 @@ import { useThemeStore } from "@/lib/stores/theme-store";
 import { useTranslation } from "@/hooks/useTranslation";
 import { LanguageSelector } from "@/components/language-selector";
 import { APP_COLOR_PRESETS, APP_COLOR_NAMES, type AppColorName } from "@oxyhq/bloom/theme";
-import { getClarityVars } from "@/lib/app-color-presets";
+import { getAppColorVars } from "@/lib/app-color-presets";
 import { cn } from "@/lib/utils";
 
 /** Miniature app layout using real theme tokens via NativeWind vars() */
 const AppMiniature = React.memo(function AppMiniature({ variant, colorName }: { variant: "light" | "dark"; colorName: AppColorName }) {
-  const themeVars = vars(getClarityVars(colorName, variant));
+  const themeVars = vars(getAppColorVars(colorName, variant));
 
   return (
     <View className="flex-row flex-1 rounded overflow-hidden" style={themeVars}>

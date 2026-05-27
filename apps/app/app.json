@@ -1,12 +1,12 @@
 {
   "expo": {
     "owner": "oxyhq",
-    "name": "Clarity",
-    "slug": "clarity",
+    "name": "Oxy Space",
+    "slug": "oxyspace",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon-512.png",
-    "scheme": "clarity",
+    "scheme": "oxyspace",
     "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/icon-512.png",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "so.oxy.clarity",
+      "bundleIdentifier": "so.oxy.space",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -30,7 +30,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "googleServicesFile": "./google-services.json",
-      "package": "so.oxy.clarity",
+      "package": "so.oxy.space",
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",

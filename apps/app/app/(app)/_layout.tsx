@@ -8,14 +8,10 @@ import { useColorScheme } from '@/lib/useColorScheme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUIStore } from '@/lib/stores/ui-store';
 import i18n from '@/lib/i18n';
-import { useWelcomeSuggestions, useSessionSuggestionGeneration } from '@/lib/hooks/use-suggestions';
 import { useNotificationSetup } from '@/lib/hooks/use-notification-setup';
 
-// Routes visible in the drawer sidebar
-const VISIBLE_ROUTES = new Set(['c/[id]/index', 'settings/index']);
-
 // Routes that handle their own top safe area insets
-const SELF_INSET_ROUTES = new Set(['index', 'c/[id]/index', 'settings', 'history', 'discover', 'finance']);
+const SELF_INSET_ROUTES = new Set(['index', 'settings']);
 
 const SIDEBAR_WIDTH_EXPANDED = 256;
 const SIDEBAR_WIDTH_COLLAPSED = 48;
@@ -26,10 +22,6 @@ export default function AppLayout() {
   const { colors } = useColorScheme();
   const insets = useSafeAreaInsets();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
-
-  // Prefetch welcome suggestions so they're ready before any chat screen mounts
-  useWelcomeSuggestions();
-  useSessionSuggestionGeneration();
 
   // Push notification registration, tap handling, and real-time subscription
   useNotificationSetup();
@@ -62,7 +54,8 @@ export default function AppLayout() {
     drawerType: isLargeScreen ? ('permanent' as const) : ('front' as const),
     swipeEnabled: !isLargeScreen,
     overlayColor: isLargeScreen ? 'transparent' : 'rgba(0, 0, 0, 0.5)',
-    drawerItemStyle: VISIBLE_ROUTES.has(route.name) ? undefined : { display: 'none' as const },
+    // Hide all built-in drawer items; the custom Sidebar renders its own navigation
+    drawerItemStyle: { display: 'none' as const },
   }), [insets.top, colors.background, isLargeScreen, drawerWidth]);
 
   return (
@@ -78,34 +71,6 @@ export default function AppLayout() {
                 drawerContent={renderDrawerContent}
                 screenOptions={screenOptions}
               >
-                <Drawer.Screen
-                  name="c/[id]/index"
-                  options={{
-                    drawerLabel: i18n.t('nav.chat'),
-                    title: i18n.t('nav.chat'),
-                  }}
-                />
-                <Drawer.Screen
-                  name="history"
-                  options={{
-                    drawerLabel: i18n.t('sidebar.history'),
-                    title: i18n.t('sidebar.history'),
-                  }}
-                />
-                <Drawer.Screen
-                  name="discover"
-                  options={{
-                    drawerLabel: i18n.t('nav.discover'),
-                    title: i18n.t('nav.discover'),
-                  }}
-                />
-                <Drawer.Screen
-                  name="finance"
-                  options={{
-                    drawerLabel: i18n.t('nav.finance'),
-                    title: i18n.t('nav.finance'),
-                  }}
-                />
                 <Drawer.Screen
                   name="settings/index"
                   options={{

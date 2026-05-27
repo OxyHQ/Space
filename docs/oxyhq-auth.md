@@ -53,7 +53,7 @@ Are you building...
 **Packages:** `@oxyhq/core` only
 
 **Apps using this:**
-- `api` - Main Clarity API server (includes internal providers module)
+- `api` - Main Oxy Space API server (includes internal providers module)
 
 **Features:**
 - Session validation

@@ -1,38 +1,30 @@
-# Clarity - Project Conventions
+# Oxy Space - Project Conventions
 
-## Model Abstraction Architecture
+## Product
 
-**CRITICAL RULE: Users and developers must ONLY see Clarity-branded model names. Never expose internal provider names.**
+Oxy Space is a Notion-like workspace by Oxy: docs, databases, blocks, real-time collab, plus a native AI hub. It replaces the legacy "Clarity" AI chat product. The legacy chat runtime is in the process of being stripped from the user-facing surface.
 
-### How it works
+Roadmap reference: `~/.claude/plans/this-was-other-app-fancy-meteor.md`. Phase 0 (strip) and the brand pivot are complete in this pass. Phase 1 onwards introduces:
 
-- **User-facing models**: `clarity-fast`, `clarity-v1`, `clarity-pro`, `clarity-thinking`, `clarity-pro-max`
-- **Internal providers**: OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, and others. These are strictly internal and must never be exposed.
-- **Routing**: Each Clarity model maps to multiple provider models with automatic fallback (cheapest/free tier first, then progressively more expensive).
+- **Pages** — hierarchical, block-structured documents
+- **Blocks** — text, headings, lists, todos, embeds, code, callouts, databases, etc.
+- **Databases** — typed columns, views (table, board, gallery, calendar), filters, sorts
+- **Collab** — real-time multi-user editing, presence, comments, mentions
+- **Hub AI** (Phase 5) — internal AI assistance over workspace content (not a public chat product)
 
-### What to NEVER do
+## Internal AI provider routing (internal only)
 
-- Never show provider names (OpenAI, Anthropic, Google, Groq, etc.) in UI, API responses, error messages, SEO metadata, or documentation
-- Never show provider model IDs (gpt-4o, claude-sonnet-4, gemini-2.5-flash, etc.) to users
-- Never reference specific provider models in feature descriptions or marketing copy
+There is no end-user model picker in Oxy Space. The legacy provider-routing layer is preserved under `apps/api/src/internal/providers/*` for Hub AI in Phase 5 and is **internal-only**:
 
-### What to ALWAYS do
+- Internal calls map an abstract model identifier to one or more concrete provider models with automatic fallback.
+- Internal providers (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, etc.) must never be exposed to the end user — not in UI, API responses, errors, SEO metadata, or docs.
+- Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for any user-facing error path that touches provider code.
 
-- Use Clarity model names: `clarity-v1`, `clarity-fast`, `clarity-pro`, `clarity-thinking`, etc.
-- Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for all user-facing error messages
-- When displaying analytics/model usage, resolve to Clarity model names via `getClarityModel()` and skip entries that can't be resolved
-
-### Key files
-
-- `apps/api/src/internal/providers/lib/clarity-models.ts` - Clarity model definitions
-- `apps/api/src/internal/providers/lib/generate-model-mappings.ts` - Provider routing config
-- `apps/api/src/routes/v1/models.ts` - Public models API (returns only Clarity models)
-- `apps/api/src/lib/errors/sanitize.ts` - Error message sanitization (strips provider names)
-- `apps/api/src/internal/` - All provider logic (internal only, CORS-restricted)
+The internal-only API is CORS-restricted to known Oxy origins and is not part of the public Oxy Space surface.
 
 ## MongoDB Database Naming
 
-All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app uses its own database named `{appName}-{NODE_ENV}` (e.g., `clarity-production`). The `dbName` is passed to `mongoose.connect()`, not embedded in `MONGODB_URI`.
+All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app uses its own database named `{appName}-{NODE_ENV}` (e.g., `oxyspace-production`). The `dbName` is passed to `mongoose.connect()`, not embedded in `MONGODB_URI`.
 
 ## Monorepo Structure
 
@@ -42,15 +34,21 @@ All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app 
 ## Tech Stack
 
 - **Frontend**: Expo 55, React Native 0.83, TypeScript, NativeWind (Tailwind), Reanimated v4, Zustand, TanStack Query
-- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO
+- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO, Redis (Valkey)
 - **Auth**: @oxyhq/services (OxyProvider, useAuth, OxySignInButton)
 - **Routing**: expo-router (file-based)
+- **Infra**: SST + DigitalOcean (App Platform, Spaces) + Cloudflare
 
-## Search-First Architecture
+## Vocabulary
 
-Clarity is an AI-powered search engine by Oxy. Key principles:
-- **Always search first**: The AI searches the web before answering factual questions
-- **Source citations**: Every factual claim includes numbered source references [1], [2], etc.
-- **Deep research mode**: Multi-step research with decomposition, parallel search, extraction, synthesis
-- **Follow-up suggestions**: After each answer, suggest 3 related follow-up questions
-- **SSE streaming**: All search responses stream via Server-Sent Events with custom events (clarity.research_progress, clarity.reasoning, clarity.tool_result, clarity.title, clarity.follow_ups, clarity.source_card)
+When designing or describing features, prefer this vocabulary:
+
+- **page** — a document. May contain blocks, sub-pages, or be a database row.
+- **block** — atomic content unit inside a page (paragraph, heading, todo, code, embed, etc.).
+- **database** — a typed collection of pages with columns and views.
+- **view** — a way of rendering a database (table, board, gallery, calendar).
+- **workspace** — a top-level container with members, settings, permissions.
+- **member** — a user with a role inside a workspace.
+- **collab** — real-time multi-cursor editing, presence, comments.
+
+Do **not** use legacy chat-product vocabulary (conversation, message, thread, role/persona, agent, skill, deep research, follow-up) in user-facing copy for Oxy Space surfaces.

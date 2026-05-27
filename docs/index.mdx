@@ -1,78 +1,48 @@
 ---
-title: Clarity
-description: AI-powered search engine by Oxy — cited answers, deep research, and proactive agents.
+title: Oxy Space
+description: Oxy Space — your workspace for docs, databases, and AI.
 order: 0
 ---
 
-# Clarity
+# Oxy Space
 
-AI-powered search engine by [Oxy](https://oxy.so). Clarity answers questions with numbered source citations, runs multi-step deep research, executes autonomous agents under policy controls, and integrates with the rest of the Oxy ecosystem through a manifest-driven service connector protocol.
+Workspace for docs, databases, and AI, by [Oxy](https://oxy.so).
 
 <Badge variant="success">App</Badge> <Badge>SaaS</Badge>
 
-**Live:** [clarity.surf](https://clarity.surf)
+**Live:** [space.oxy.so](https://space.oxy.so)
 
 ## What it is
 
-Clarity is a context-agent platform with three surfaces sharing one runtime:
+Oxy Space is a Notion-like workspace surface running on the Oxy ecosystem. Today, the codebase is mid-pivot from a legacy AI chat product — Phase 0 has stripped the visible chat UI, and pages, blocks, databases, real-time collab, and the native AI hub land in subsequent phases.
 
-- **Web + mobile app** — Expo 55 / React Native 0.83 + NativeWind on `clarity.surf`
-- **Public API** — Express + TypeScript, OpenAI-compatible `/v1/chat/completions` endpoint
-- **Autonomy runtime** — trigger engine, context graph, learned-rule store, and risk governance
+Surfaces:
 
-Every interaction runs the same five-step loop: **classify → recall → retrieve → act → learn.** Read-only actions are autonomous, reversible writes save rollback records, external-impact writes wait for user approval, and destructive actions are blocked outright.
+- **Expo client** — web + iOS + Android (`apps/app`, built with Expo 55, React Native 0.83, NativeWind, expo-router)
+- **Express API** — TypeScript backend (`apps/api`, MongoDB, Redis/Valkey, Socket.IO)
 
-## Architecture
-
-```
-                            +-------------------+
-                            |   Expo App (Web,  |
-     User  ───────────────> |   iOS, Android)   |
-                            +--------+----------+
-                                     |
-                       POST /v1/chat/completions (SSE)
-                                     |
-                            +--------v----------+
-                            |  Express API      |
-                            |  (apps/api)       |
-                            +--+---------+------+
-                               |         |
-               +---------------+         +----------------+
-               |                                          |
-      +--------v---------+                  +-------------v-----------+
-      |  MongoDB         |                  |  AI Providers (routed   |
-      |  (Mongoose)      |                  |  via Clarity model      |
-      +--------+---------+                  |  abstraction)           |
-               |                            +-------------------------+
-      +--------v---------+
-      |  Redis (Valkey)  |     Socket.IO real-time events:
-      |  rate limits,    |     approvals, streaming, notifications
-      |  caching         |
-      +------------------+
-```
-
-### Monorepo layout
+## Monorepo layout
 
 ```
 apps/
-  app/    @clarity/app    Expo cross-platform client (web + iOS + Android)
-  api/    @clarity/api    Express backend + autonomy runtime
-sst.config.ts             SST infra: DO App Platform, DO Spaces, Cloudflare
+  app/    @oxyspace/app    Expo cross-platform client (web + iOS + Android)
+  api/    @oxyspace/api    Express backend
+sst.config.ts              SST infra: DO App Platform, DO Spaces, Cloudflare
 ```
 
-### Stack
+## Stack
 
 | Layer | Technology |
 |-------|------------|
 | Frontend | Expo 55, React Native 0.83, React 19, NativeWind, Reanimated v4, Zustand, TanStack Query, expo-router |
-| Backend | Express, TypeScript, MongoDB (Mongoose), Socket.IO, Redis (Valkey) |
+| Backend | Express, TypeScript, MongoDB (Mongoose, shared `db-oxy` cluster), Socket.IO, Redis (Valkey) |
 | Auth | `@oxyhq/services` (RN), `@oxyhq/auth` (web), `@oxyhq/core` (API) |
-| AI providers | Multi-provider abstraction with automatic fallback (provider names are internal only) |
+| Internal AI | Internal-only provider routing (Phase 5) — never exposed to end users |
 | Infra | SST 4.x on DigitalOcean App Platform + Spaces, fronted by Cloudflare |
 
 ## Install
 
-Clarity is not a published library — it is the source repo for the clarity.surf product. Clone it to run locally:
+Clone and install with `bun` (this is a bun workspace; do not use npm or yarn):
 
 ```sh
 git clone https://github.com/OxyHQ/Clarity.git
@@ -80,143 +50,28 @@ cd Clarity
 bun install
 ```
 
-The repo is a Bun workspace with two packages:
+Workspaces:
 
-- `apps/api` (`@clarity/api`) — backend
-- `apps/app` (`@clarity/app`) — Expo client
+- `apps/api` (`@oxyspace/api`)
+- `apps/app` (`@oxyspace/app`)
 
 ## Quick start
-
-### Run locally
 
 ```sh
 # Backend (port 3001)
 bun run dev:api
 
-# Frontend (Expo, opens a tunnel for device testing)
+# Frontend (Expo, web + tunnel)
 bun run dev:app
 ```
 
-Both servers expect a `.env` in `apps/api/` with MongoDB, Redis, Oxy, and at least one AI provider configured. See `apps/api/.env.example`.
-
-### Call the public API
-
-The chat endpoint is OpenAI-compatible — drop it into any client that speaks the `/v1/chat/completions` shape:
-
-```ts
-const res = await fetch('https://api.clarity.surf/v1/chat/completions', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${CLARITY_SK}`, // clarity_sk_... developer key
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    model: 'clarity-v1',
-    messages: [{ role: 'user', content: 'What did Oxy ship this week?' }],
-    stream: true,
-    deepResearch: true,
-  }),
-});
-
-const reader = res.body!.getReader();
-const decoder = new TextDecoder();
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  process.stdout.write(decoder.decode(value));
-}
-```
-
-Sessions from the Clarity app use a standard OxyHQ `Bearer` token instead of a `clarity_sk_` key — same endpoint, same shape.
-
-## Core concepts
-
-### Model abstraction
-
-Users and developers only ever see **Clarity-branded model IDs** — never the underlying provider. Each Clarity model maps to multiple provider models with automatic fallback, ranked by cost and quality.
-
-| Tier | When to use |
-|------|-------------|
-| `clarity-fast` | Quick lookups, autocomplete, low-credit-cost responses |
-| `clarity-v1` | Default everyday answers with web search + citations |
-| `clarity-pro` | Higher-quality reasoning for complex questions |
-| `clarity-thinking` | Long-horizon multi-step reasoning |
-| `clarity-pro-max` | Top-tier multimodal pro workloads |
-
-Specialised tiers (`clarity-v1-codea`, `clarity-v1-cowork`, `clarity-v1-vision`, `clarity-v1-voice`, `clarity-v1-tts`, `clarity-v1-image`, etc.) target specific surfaces and capabilities. The full catalogue lives in `apps/api/src/internal/providers/lib/clarity-models.ts`.
-
-Provider names, provider model IDs, and any internal routing details are **never** returned in API responses, error messages, SEO metadata, or analytics — `sanitizeMessage()` and `getClarityModel()` strip them at the edges.
-
-### Search-first answers with citations
-
-The default chat runtime searches the web before answering factual questions. Sources are extracted, ranked, and inlined as numbered references (`[1]`, `[2]`, …). Each numbered reference can be hovered or tapped to reveal the source card streamed via the `clarity.source_card` SSE event.
-
-### Deep research
-
-`deepResearch: true` switches the runtime into a multi-step research mode:
-
-1. **Decompose** the query into sub-questions
-2. **Search in parallel** across providers and the [contact graph](memory-system)
-3. **Extract** relevant passages from each result
-4. **Synthesize** the answer with full citation trail
-
-Progress streams as `clarity.research_progress` events with phase + percent so clients can render a live progress UI.
-
-### Autonomy and risk policy
-
-Every action is classified into one of four risk levels enforced by the runtime:
-
-| Level | Meaning | Behavior |
-|-------|---------|----------|
-| `R0` | Read-only | Fully autonomous |
-| `R1` | Reversible write | Autonomous + rollback record saved |
-| `R2` | External/unknown impact | Requires user approval |
-| `R3` | Destructive | Blocked |
-
-Approvals are real-time. The server emits a `clarity.approval_request` SSE event; the client replies via Socket.IO; the runtime resumes (or aborts) on the `clarity.approval_result`.
-
-### Streaming event contract
-
-All chat responses stream via Server-Sent Events. Standard OpenAI deltas are augmented with named Clarity events (every event carries `eventVersion: 1`):
-
-| Event | Payload | Purpose |
-|-------|---------|---------|
-| `clarity.research_progress` | `{ phase, percent }` | Deep-research progress bar |
-| `clarity.reasoning` | `{ tokens, summary }` | Reasoning trace blocks |
-| `clarity.tool_result` | `{ toolName, output }` | Tool execution payloads |
-| `clarity.source_card` | `{ index, url, title, snippet }` | Numbered citation card |
-| `clarity.title` | `{ title }` | Conversation title (set after first turn) |
-| `clarity.follow_ups` | `{ suggestions: string[] }` | Three follow-up questions |
-| `clarity.plan_preview` | `{ planId, intent, steps[] }` | Multi-step plan preview |
-| `clarity.approval_request` | `{ requestId, toolName, args, severity }` | Pause for user approval |
-| `clarity.approval_result` | `{ requestId, decision }` | Decision: `approved \| denied \| timeout` |
-| `clarity.agent_session` | `{ agentSessionId }` | Autonomous session was created |
-| `clarity.model_switch` | `{ from, to, reason }` | Runtime fallback notification |
-
-### Oxy service connector
-
-Clarity integrates with the rest of the Oxy ecosystem (and future third-party services) via a **manifest-driven protocol**. Services register an `OxyService` document in MongoDB declaring their tools, events, and optional context endpoint. Clarity reads the manifest at chat time, generates AI-SDK `tool()` wrappers with Zod schemas, and forwards the user's OxyHQ JWT to the service — no code changes required in Clarity itself to onboard a new service.
-
-Event webhooks flow back the other way: services post to `/webhooks/oxy/:serviceId` with HMAC-signed payloads to trigger notifications, context updates, or autonomous agent sessions.
-
-### Memory and context graph
-
-Two complementary persistence layers shape every response:
-
-- **User memory profile** — long-term preferences and facts (`UserMemory` model)
-- **Context graph** — `ContextSource` quality scores, `ContextNode` entities, `ContextEdge` relationships, `RetrievalStrategy` per-intent ordering, `LearningRule` corrections
-
-Every chat run updates source quality (success/failure + latency), upserts message-to-response graph nodes, and persists user corrections (`Correction: …`, `Remember: …`) as high-priority rules.
+The API expects a `.env` in `apps/api/` with MongoDB, Redis, and Oxy auth configured. See `apps/api/example.env`.
 
 ## Topics
 
-- **[API Reference](api-reference)** — full endpoint catalogue: `/v1/chat/completions`, models, triggers, notifications, webhooks
-- **[Memory System](memory-system)** — `UserMemory`, context graph, learning rules, rollback records
-- **[Proactive Intelligence](proactive-intelligence)** — trigger engine, autonomy runtime, governance, approvals
+- **[API Reference](api-reference)** — endpoint catalogue
 - **[Deployment](deployment)** — SST + DigitalOcean + Cloudflare infra-as-code
-- **[Onboarding](onboarding)** — full developer onboarding walkthrough
-- **[Agents](agents)** — execution loop, intents, governance levels
-- **[Developers Portal](developers-portal)** — apps, API keys, scopes, usage analytics
+- **[Onboarding](onboarding)** — developer onboarding walkthrough
 - **[OxyHQ Auth](oxyhq-auth)** — which OxyHQ package to use per surface
 
 ## Repository

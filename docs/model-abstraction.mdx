@@ -1,16 +1,16 @@
 ---
-title: Model abstraction
-description: How Clarity routes user-facing model tiers to underlying providers without leaking provider identity.
+title: Model abstraction (internal)
+description: How the internal AI provider routing layer (Phase 5) works.
 order: 2
 ---
 
-# Model abstraction
+# Model abstraction (internal)
 
-Clarity is multi-provider on the backend (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, …) but exposes a **single Clarity-branded surface** to users and developers. Provider names, provider model IDs, and routing decisions are strictly internal — they never appear in API responses, UI strings, error messages, SEO metadata, or analytics dashboards.
+> This describes the internal AI provider routing layer carried over from the legacy Clarity AI chat product. It is reserved for Phase 5 (Hub AI) and is **not** exposed to end users in Oxy Space. There is no user-facing model picker.
 
-This page documents the abstraction: the public model tiers, how routing and fallback work, and the invariants every contributor must preserve.
+The routing layer is multi-provider on the backend (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, …) and is strictly internal. Provider names, provider model IDs, and routing decisions never appear in user-facing UI, API responses, error messages, SEO metadata, or analytics dashboards.
 
-## Public catalogue
+## Internal catalogue
 
 Clarity ships a small, named tier set. The complete list (with token limits, credit multipliers, and category flags) lives in [`apps/api/src/internal/providers/lib/clarity-models.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/internal/providers/lib/clarity-models.ts).
 

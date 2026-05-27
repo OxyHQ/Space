@@ -25,33 +25,33 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()" />
 
         {/* Primary Meta Tags */}
-        <meta name="title" content="Clarity" />
+        <meta name="title" content="Oxy Space" />
         <meta
           name="description"
-          content="Clarity is an AI-powered search engine by Oxy. Get comprehensive answers with cited sources."
+          content="Oxy Space — your workspace for docs, databases, and AI."
         />
         <meta
           name="keywords"
-          content="AI chat, AI assistant, chatbot, artificial intelligence, productivity, AI conversation, machine learning, chat AI"
+          content="workspace, docs, databases, notes, knowledge base, productivity, collaboration"
         />
 
         {/* Open Graph / Facebook Meta Tags for social sharing */}
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://clarity.oxy.so/" />
-        <meta property="og:title" content="Clarity" />
+        <meta property="og:url" content="https://space.oxy.so/" />
+        <meta property="og:title" content="Oxy Space" />
         <meta
           property="og:description"
-          content="Clarity is an AI-powered search engine by Oxy. Get comprehensive answers with cited sources."
+          content="Oxy Space — your workspace for docs, databases, and AI."
         />
         <meta property="og:image" content="/og-image.png" />
 
         {/* Twitter Card Meta Tags */}
         <meta property="twitter:card" content="summary_large_image" />
-        <meta property="twitter:url" content="https://clarity.oxy.so/" />
-        <meta property="twitter:title" content="Clarity" />
+        <meta property="twitter:url" content="https://space.oxy.so/" />
+        <meta property="twitter:title" content="Oxy Space" />
         <meta
           property="twitter:description"
-          content="Clarity is an AI-powered search engine by Oxy. Get comprehensive answers with cited sources."
+          content="Oxy Space — your workspace for docs, databases, and AI."
         />
         <meta property="twitter:image" content="/og-image.png" />
 
@@ -74,7 +74,7 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="apple-touch-icon" sizes="120x120" href="/icon-192.png" />
 
         {/* Apple Mobile Web App */}
-        <meta name="apple-mobile-web-app-title" content="Clarity" />
+        <meta name="apple-mobile-web-app-title" content="Oxy Space" />
 
         {/* Disable body scrolling for native-like feel on web */}
         <ScrollViewStyleReset />
@@ -90,10 +90,10 @@ export default function Root({ children }: PropsWithChildren) {
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@type': 'WebApplication',
-              name: 'Clarity',
-              url: 'https://clarity.oxy.so',
+              name: 'Oxy Space',
+              url: 'https://space.oxy.so',
               description:
-                'Clarity is an AI-powered search engine by Oxy. Get comprehensive answers with cited sources.',
+                'Oxy Space — your workspace for docs, databases, and AI.',
               applicationCategory: 'BusinessApplication',
               operatingSystem: 'Web, iOS, Android',
               offers: {

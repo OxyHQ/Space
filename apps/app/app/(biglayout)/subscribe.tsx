@@ -10,7 +10,7 @@ import {
   useCreateSubscriptionCheckout,
   type SubscriptionPlan,
 } from '@/lib/hooks/use-billing';
-import { useAuth } from '@oxyhq/services';
+import { useAuth, showSignInModal } from '@oxyhq/services';
 import { toast } from '@/components/sonner';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ArrowLeft, Check, Sparkles } from 'lucide-react-native';
@@ -29,12 +29,13 @@ export default function SubscribeScreen() {
   const { data: subscription } = useSubscription('clarity');
   const checkoutMutation = useCreateSubscriptionCheckout();
 
-  // Redirect to login if not authenticated
+  // Send unauthenticated users home and open the sign-in modal
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.replace('/login');
+      router.replace('/(app)');
+      showSignInModal();
     }
-  }, [authLoading, isAuthenticated]);
+  }, [authLoading, isAuthenticated, router]);
 
   const handleSelectPlan = async (plan: SubscriptionPlan) => {
     if (plan.isFree) return;
@@ -68,7 +69,7 @@ export default function SubscribeScreen() {
   return (
     <>
       <Head>
-        <title>Subscribe - Clarity</title>
+        <title>Subscribe - Oxy Space</title>
       </Head>
       <View className="flex-1 bg-background">
         {/* Header */}

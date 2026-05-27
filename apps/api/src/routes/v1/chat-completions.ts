@@ -6,7 +6,6 @@ import { getClarityModel, getModelMappingsForTier } from '../../lib/gateway-clie
 import { getOrCreateUserCredits } from '../../lib/user-credits-helpers.js';
 import { Conversation } from '../../models/conversation.js';
 import { reserveCredits, refundReservation, type CreditReservation, type CreditUsage } from '../../lib/credits-manager.js';
-import { handleDeepResearch } from '../../lib/chat-modes/deep-research-handler.js';
 import {
   saveConversationResult,
   generateTitleAsync,
@@ -122,15 +121,14 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       return;
     }
 
-    // Extract optional parameters for Clarity internal features
+    // Extract optional parameters for internal features
     const conversationId = body.conversationId as string | undefined;
     const thinkingMode = body.thinkingMode as boolean | undefined;
     const agentMode = body.agentMode as boolean | undefined;
-    const deepResearch = body.deepResearch as boolean | undefined;
     const streamOptions = body.stream_options as { include_usage?: boolean } | undefined;
     const includeUsage = streamOptions?.include_usage === true;
 
-    log.v1.info({ messageCount: messages.length, conversationId, thinkingMode, agentMode, deepResearch }, 'Processing messages');
+    log.v1.info({ messageCount: messages.length, conversationId, thinkingMode, agentMode }, 'Processing messages');
 
     // Determine if this is a direct user session (not API key)
     // API key requests should be neutral and not include creator's personal info
@@ -286,24 +284,6 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         metadata: {},
       }).catch(() => null);
       recalledMemories = hookResult?.metadata?.recalledMemories as Array<{ key: string; value: string }> | undefined;
-    }
-
-    // ── Deep Research Mode ──
-    if (deepResearch && req.user?.id) {
-      const handled = await handleDeepResearch({
-        res,
-        requestId,
-        clarityModelId,
-        userId: req.user.id,
-        conversationId,
-        messages,
-        creditReservation,
-
-        requestStartTime,
-        globalTimer,
-        signal: req.socket.destroyed ? AbortSignal.abort() : undefined,
-      });
-      if (handled) return;
     }
 
     // Assemble all tools via the unified pipeline
@@ -665,7 +645,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
           thinkingMatch.forEach(match => {
             const content = match.replace(/<\/?thinking>/g, '').trim();
             if (content) {
-              res.write(`event: clarity.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content })}\n\n`);
+              res.write(`event: oxyspace.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content })}\n\n`);
               log.v1.debug({ reasoning: content.slice(0, 100) }, 'Reasoning chunk (thinking tag)');
             }
           });
@@ -683,7 +663,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         // Handle Gemini thought summaries and other reasoning tokens
         const reasoningText = (chunk as ExtendedChunk).text || (chunk as ExtendedChunk).thoughtDelta || (chunk as ExtendedChunk).reasoningDelta;
         if (reasoningText && typeof reasoningText === 'string' && reasoningText.trim()) {
-          res.write(`event: clarity.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content: reasoningText.trim() })}\n\n`);
+          res.write(`event: oxyspace.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content: reasoningText.trim() })}\n\n`);
           log.v1.debug({ reasoning: reasoningText.slice(0, 100) }, 'Reasoning chunk (provider)');
         }
       } else if (chunk.type === 'tool-call') {
@@ -735,7 +715,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         }
 
         // Stream tool result as named SSE event (non-standard, Clarity extension)
-        res.write(`event: clarity.tool_result\ndata: ${JSON.stringify({
+        res.write(`event: oxyspace.tool_result\ndata: ${JSON.stringify({
           eventVersion: 1,
           tool_call_id: chunk.toolCallId,
           name: originalToolName,
@@ -759,7 +739,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         // Emit agent message as named SSE event (non-standard, Clarity extension)
         if (originalToolName === 'delegateToAgent' && chunk.output && !chunk.output.error) {
           const ar = chunk.output;
-          res.write(`event: clarity.agent\ndata: ${JSON.stringify({
+          res.write(`event: oxyspace.agent\ndata: ${JSON.stringify({
             eventVersion: 1,
             agentId: ar.agentId,
             agentName: ar.agentName,
@@ -904,7 +884,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       try {
         const toolOutput = await (toolFn.execute as Function)(args);
 
-        res.write(`event: clarity.tool_result\ndata: ${JSON.stringify({
+        res.write(`event: oxyspace.tool_result\ndata: ${JSON.stringify({
           eventVersion: 1,
           tool_call_id: toolCallId,
           name: toolName,
@@ -989,7 +969,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       try {
         const title = await titlePromise;
         if (title) {
-          res.write(`event: clarity.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
+          res.write(`event: oxyspace.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
           await Conversation.updateOne(
             { oxyUserId: req.user.id, conversationId },
             { $set: { title } },

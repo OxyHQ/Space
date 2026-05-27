@@ -1,7 +1,7 @@
 {
-  "name": "@clarity/api",
+  "name": "@oxyspace/api",
   "version": "1.0.0",
-  "description": "Clarity API - Intelligent proxy server orchestrating multiple AI provider API keys",
+  "description": "Oxy Space API - Express backend for the Oxy Space workspace",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

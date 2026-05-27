@@ -1,86 +1,66 @@
-# Clarity - Project Conventions
+# Oxy Space - Project Conventions
 
-## Model Abstraction Architecture
+(Mirrored from `CLAUDE.md` for AI coding assistants.)
 
-**CRITICAL RULE: Users and developers must ONLY see Clarity-branded model names. Never expose internal provider names.**
+## Product
 
-### How it works
+Oxy Space is a Notion-like workspace by Oxy: docs, databases, blocks, real-time collab, plus a native AI hub. It replaces the legacy "Clarity" AI chat product. The legacy chat runtime is in the process of being stripped from the user-facing surface.
 
-- **User-facing models**: `clarity-fast`, `clarity-v1`, `clarity-v1`, `clarity-pro`, `clarity-thinking`, `clarity-pro-max`, etc.
-- **Internal providers**: OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, and others. These are strictly internal and must never be exposed.
-- **Routing**: Each Clarity model maps to multiple provider models with automatic fallback (cheapest/free tier first, then progressively more expensive).
+Roadmap reference: `~/.claude/plans/this-was-other-app-fancy-meteor.md`. Phase 0 (strip) and the brand pivot are complete in this pass. Phase 1 onwards introduces:
 
-### What to NEVER do
+- **Pages** — hierarchical, block-structured documents
+- **Blocks** — text, headings, lists, todos, embeds, code, callouts, databases, etc.
+- **Databases** — typed columns, views (table, board, gallery, calendar), filters, sorts
+- **Collab** — real-time multi-user editing, presence, comments, mentions
+- **Hub AI** (Phase 5) — internal AI assistance over workspace content (not a public chat product)
 
-- Never show provider names (OpenAI, Anthropic, Google, Groq, etc.) in UI, API responses, error messages, SEO metadata, or documentation
-- Never show provider model IDs (gpt-4o, Codex-sonnet-4, gemini-2.5-flash, etc.) to users
-- Never reference specific provider models in feature descriptions or marketing copy
+## Internal AI provider routing (internal only)
 
-### What to ALWAYS do
+There is no end-user model picker in Oxy Space. The legacy provider-routing layer is preserved under `apps/api/src/internal/providers/*` for Hub AI in Phase 5 and is **internal-only**:
 
-- Use Clarity model names: `clarity-v1`, `clarity-fast`, `clarity-pro`, `clarity-thinking`, etc.
-- Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for all user-facing error messages
-- When displaying analytics/model usage, resolve to Clarity model names via `getClarityModel()` and skip entries that can't be resolved
+- Internal calls map an abstract model identifier to one or more concrete provider models with automatic fallback.
+- Internal providers (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, etc.) must never be exposed to the end user — not in UI, API responses, errors, SEO metadata, or docs.
+- Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for any user-facing error path that touches provider code.
 
-### Key files
-
-- `apps/api/src/internal/providers/lib/clarity-models.ts` - Clarity model definitions
-- `apps/api/src/internal/providers/lib/generate-model-mappings.ts` - Provider routing config
-- `apps/api/src/routes/v1/models.ts` - Public models API (returns only Clarity models)
-- `apps/api/src/lib/errors/sanitize.ts` - Error message sanitization (strips provider names)
-- `apps/api/src/internal/` - All provider logic (internal only, CORS-restricted)
+The internal-only API is CORS-restricted to known Oxy origins and is not part of the public Oxy Space surface.
 
 ## MongoDB Database Naming
 
-All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app uses its own database named `{appName}-{NODE_ENV}` (e.g., `clarity-production`). The `dbName` is passed to `mongoose.connect()`, not embedded in `MONGODB_URI`.
+All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app uses its own database named `{appName}-{NODE_ENV}` (e.g., `oxyspace-production`). The `dbName` is passed to `mongoose.connect()`, not embedded in `MONGODB_URI`.
 
 ## Monorepo Structure
 
 - `apps/app/` - Main Expo app (React Native + Web)
 - `apps/api/` - Express backend API
-- (only) `apps/app/` - Main Expo app (React Native + Web)
-- (only) `apps/api/` - Express backend API
 
 ## Tech Stack
 
 - **Frontend**: Expo 55, React Native 0.83, TypeScript, NativeWind (Tailwind), Reanimated v4, Zustand, TanStack Query
-- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO
+- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO, Redis (Valkey)
 - **Auth**: @oxyhq/services (OxyProvider, useAuth, OxySignInButton)
 - **Routing**: expo-router (file-based)
+- **Infra**: SST + DigitalOcean (App Platform, Spaces) + Cloudflare
 
-## Oxy Service Connector Protocol
+## Vocabulary
 
-Clarity integrates with Oxy ecosystem apps (and future third-party services) via the **Oxy Service Connector** — a manifest-driven protocol where apps register tool definitions that Clarity auto-discovers and exposes to the AI.
+When designing or describing features, prefer this vocabulary:
 
-### How it works
+- **page** — a document. May contain blocks, sub-pages, or be a database row.
+- **block** — atomic content unit inside a page (paragraph, heading, todo, code, embed, etc.).
+- **database** — a typed collection of pages with columns and views.
+- **view** — a way of rendering a database (table, board, gallery, calendar).
+- **workspace** — a top-level container with members, settings, permissions.
+- **member** — a user with a role inside a workspace.
+- **collab** — real-time multi-cursor editing, presence, comments.
 
-1. **Service manifests** are stored in MongoDB (`OxyService` model). Each defines the service's tools, events, and optional context endpoint.
-2. **`buildOxyServiceTools()`** reads manifests at chat time, generates AI SDK `tool()` wrappers with Zod schemas (via `jsonSchemaToZod()`), and forwards the user's OxyHQ JWT to the service API.
-3. **Events** flow from services to Clarity via `POST /webhooks/oxy/:serviceId` with HMAC signature verification. Events trigger notifications, context updates, or autonomous agent sessions.
-4. **Context endpoints** (optional) provide brief user summaries injected into the system prompt at chat start.
+Do **not** use legacy chat-product vocabulary (conversation, message, thread, role/persona, agent, skill, deep research, follow-up) in user-facing copy for Oxy Space surfaces.
 
-### Adding a new service
+## Oxy Service Connector Protocol (internal / Phase 5)
 
-Insert an `OxyService` document — zero changes to Clarity's codebase needed:
-```json
-{
-  "serviceId": "oxy-notes",
-  "displayName": "Notes",
-  "tools": [{ "name": "searchNotes", "endpoint": { "method": "GET", "path": "/notes/search" }, ... }]
-}
-```
+The backend integrates with Oxy ecosystem apps via the **Oxy Service Connector** — a manifest-driven protocol where apps register tool definitions that the internal AI runtime auto-discovers. This is reserved for Phase 5 (Hub AI) and is **not** exposed in the Oxy Space user surface.
 
 ### Key files
 
 - `apps/api/src/models/oxy-service.ts` - OxyService Mongoose model (manifest schema)
-- `apps/api/src/lib/tools/oxy-services.ts` - Tool builder (`buildOxyServiceTools`, `callOxyService`, `getOxyServiceContext`, `getOxyServicePromptFragment`)
+- `apps/api/src/lib/tools/oxy-services.ts` - Tool builder
 - `apps/api/src/routes/oxy-service-events.ts` - Event webhook endpoint
-- `apps/api/src/scripts/seed-oxy-services.ts` - Seed script for email service manifest
-- `apps/api/src/routes/v1/chat-completions.ts` - Integration point (~line 615)
-
-### Patterns to follow
-
-- Same `safeExecute()` + cache pattern as `integrations.ts` and `mcp.ts`
-- Same `jsonSchemaToZod()` from `mcp-schema.ts` for runtime schema conversion
-- Auth: forward `req.accessToken` (user's OxyHQ JWT) — no OAuth needed for first-party
-- Tool naming: `oxy_{serviceId}__{toolName}` (e.g., `oxy_inbox__searchEmails`)

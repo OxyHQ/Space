@@ -1,11 +1,11 @@
 {
-  "package": "clarity",
-  "displayName": "Clarity",
-  "shortName": "clarity",
+  "package": "oxyspace",
+  "displayName": "Oxy Space",
+  "shortName": "oxyspace",
   "repo": "https://github.com/OxyHQ/Clarity",
   "category": "app",
   "versions": ["master"],
   "defaultVersion": "master",
   "docsPath": "docs/",
-  "description": "AI-powered search engine by Oxy — cited answers, deep research, and proactive agents."
+  "description": "Oxy Space — your workspace for docs, databases, and AI."
 }

@@ -1,7 +1,7 @@
 {
-  "name": "Clarity - AI-Powered Search Engine",
-  "short_name": "Clarity",
-  "description": "AI-powered search engine by Oxy. Get comprehensive answers with cited sources.",
+  "name": "Oxy Space — Workspace for docs, databases, and AI",
+  "short_name": "Oxy Space",
+  "description": "Your workspace for docs, databases, and AI.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#040711",

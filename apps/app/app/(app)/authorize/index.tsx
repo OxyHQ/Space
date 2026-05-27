@@ -3,7 +3,7 @@ import { View, ActivityIndicator, Linking, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Head from 'expo-router/head';
 import { AuthContainer, AuthLogo } from '@/components/auth';
-import { useAuth, useOxy } from '@oxyhq/services';
+import { useAuth, useOxy, showSignInModal } from '@oxyhq/services';
 import apiClient from '@/lib/api/client';
 import config from '@/lib/config';
 import { Button } from '@/components/ui/button';
@@ -27,12 +27,12 @@ interface AppConfig {
 const APP_CONFIGS: Record<string, AppConfig> = {
   codea: {
     name: 'codea',
-    displayName: 'Clarity',
+    displayName: 'Oxy Space',
     permissionKeys: ['sendMessages', 'useCredits', 'accessModels'],
   },
   cowork: {
     name: 'cowork',
-    displayName: 'Clarity',
+    displayName: 'Oxy Space',
     permissionKeys: ['sendMessages', 'useCredits', 'accessModels'],
   },
   telegram: {
@@ -157,10 +157,7 @@ export default function AuthorizeScreen() {
     if (!isOxyAuth) {
       setStatus('needLogin');
       setMessage(t('authorize.needLogin', { app: appConfig.displayName }));
-      setTimeout(() => {
-        const returnTo = `/authorize?app=${channelType}&token=${token}&channel=${channelType}`;
-        router.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
-      }, 1500);
+      showSignInModal();
       return;
     }
 
@@ -198,12 +195,9 @@ export default function AuthorizeScreen() {
     } else {
       // OAuth flow for Codea/Cowork
       if (!isAuthenticated) {
-        const urlParams = new URLSearchParams();
-        Object.entries(params).forEach(([key, value]) => {
-          if (value) urlParams.set(key, value as string);
-        });
-        const returnTo = `/authorize?${urlParams.toString()}`;
-        router.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+        setStatus('needLogin');
+        setMessage(t('authorize.needLogin', { app: appConfig.displayName }));
+        showSignInModal();
         return;
       }
       setStatus('authorize');
@@ -381,7 +375,7 @@ export default function AuthorizeScreen() {
                   </>
                 ) : appConfig.isChannel ? (
                   <Text className="text-xs text-muted-foreground text-center">
-                    You can now return to {appConfig.displayName} and start chatting with Clarity!
+                    You can now return to {appConfig.displayName} and continue working in Oxy Space!
                   </Text>
                 ) : (
                   <Text className="text-xs text-muted-foreground text-center">

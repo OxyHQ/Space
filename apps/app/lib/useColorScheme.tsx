@@ -6,7 +6,7 @@ import { useThemeStore, ThemeMode } from './stores/theme-store';
 import { setColorSchemeSafe } from './set-color-scheme-safe';
 import { useCallback, useEffect, useMemo } from 'react';
 import { APP_COLOR_PRESETS } from '@oxyhq/bloom/theme';
-import { getClarityVars } from './app-color-presets';
+import { getAppColorVars } from './app-color-presets';
 
 /** Convert an HSL CSS variable value like "153 50% 5%" to "hsl(153, 50%, 5%)".
  *  Also handles alpha syntax "0 0% 100% / 10%" → "hsla(0, 0%, 100%, 0.1)". */
@@ -46,7 +46,7 @@ export function useColorScheme() {
   );
 
   const colors = useMemo(() => {
-    const v = getClarityVars(appColor, resolved);
+    const v = getAppColorVars(appColor, resolved);
     return {
       background: hslVarToCSS(v['--background']),
       foreground: hslVarToCSS(v['--foreground']),

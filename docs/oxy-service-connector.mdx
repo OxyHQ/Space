@@ -6,9 +6,11 @@ order: 3
 
 # Oxy service connector
 
-Clarity integrates with the rest of the Oxy ecosystem — and with future third-party services — through a **manifest-driven protocol**. A service registers an `OxyService` document declaring its tools, events, and optional context endpoint. Clarity auto-discovers the manifest at chat time, generates AI-SDK `tool()` wrappers with Zod schemas, and forwards the user's OxyHQ JWT to the service API.
+> This describes a manifest-driven integration protocol carried over from the legacy Clarity AI chat product. It is internal-only for Oxy Space today (Phase 5 / Hub AI scope).
 
-**Onboarding a new service requires zero changes to Clarity's codebase** — only an `OxyService` document insert.
+The backend integrates with the rest of the Oxy ecosystem — and with future third-party services — through a **manifest-driven protocol**. A service registers an `OxyService` document declaring its tools, events, and optional context endpoint. The internal runtime auto-discovers the manifest at chat time, generates AI-SDK `tool()` wrappers with Zod schemas, and forwards the user's OxyHQ JWT to the service API.
+
+**Onboarding a new service requires zero codebase changes** — only an `OxyService` document insert.
 
 ## How it works
 

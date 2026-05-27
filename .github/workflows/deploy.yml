@@ -26,4 +26,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/app/dist --project-name clarity --branch master
+          command: pages deploy apps/app/dist --project-name oxyspace --branch master

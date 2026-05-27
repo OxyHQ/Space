@@ -1,10 +1,9 @@
 /**
  * Tool Pipeline — unified assembly of all tool sources for chat contexts.
  *
- * Assembles the search-focused tool set for Clarity:
+ * Assembles the generic tool set:
  *   1. Web search tools (webSearch, webScraper, browse)
  *   2. Utility tools (getCurrentDate, generateFile)
- *   3. Deep research tool (multi-step search)
  */
 
 import type { ToolSet } from 'ai';
@@ -14,7 +13,6 @@ import {
   browseTool,
   webScraperTool,
   generateFileTool,
-  createDeepResearchTool,
 } from './tools/index.js';
 import type { SSEEmitter } from './sse-emitter.js';
 
@@ -45,12 +43,11 @@ export class ToolPipeline {
   /**
    * Assemble the complete tool set for a chat user session.
    */
-  static async forUser(opts: ForUserOptions): Promise<ForUserResult> {
-    const { userId, isDirectSession } = opts;
+  static async forUser(_opts: ForUserOptions): Promise<ForUserResult> {
     const toolNameMapping = new Map<string, string>();
 
     // Search and utility tools (always available)
-    const clarityTools: ToolSet = {
+    const tools: ToolSet = {
       getCurrentDate: getCurrentDateTool,
       webSearch: webSearchTool,
       webScraper: webScraperTool,
@@ -58,11 +55,6 @@ export class ToolPipeline {
       generateFile: generateFileTool,
     };
 
-    // Deep research (needs userId for credit tracking)
-    if (isDirectSession && userId) {
-      clarityTools.deepResearch = createDeepResearchTool(userId);
-    }
-
-    return { tools: clarityTools, toolNameMapping };
+    return { tools, toolNameMapping };
   }
 }
