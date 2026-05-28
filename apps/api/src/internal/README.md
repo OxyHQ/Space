@@ -18,7 +18,7 @@ The `providers/` module is an internal service for managing AI provider keys, mo
 The providers module was previously a separate microservice but has been integrated into the main API to reduce infrastructure costs while maintaining clear separation.
 
 ```
-Main API (Port 3001)
+Main API (Port 4001)
 ├── Public Endpoints (/health, /auth, /chat, etc.)
 ├── Public Billing (/billing/plans, /billing/checkout, /billing/subscription)
 └── Internal Gateway (/internal/gateway)

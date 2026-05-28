@@ -62,13 +62,13 @@ export const browseTool = tool({
         if (!check.valid) return { action, error: `URL blocked: ${check.reason}` };
       }
 
-      // Use the Clarity API as LLM backend (OpenAI-compatible endpoint)
+      // Use the Oxy Space API as LLM backend (OpenAI-compatible endpoint)
       const serviceSecret = process.env.SERVICE_SECRET;
       if (!serviceSecret) {
         return { action, error: 'SERVICE_SECRET not configured for browse tool' };
       }
 
-      const clarityApiUrl = process.env.CLARITY_API_URL || 'http://localhost:3001';
+      const oxySpaceApiUrl = process.env.OXYSPACE_API_URL || 'http://localhost:4001';
 
       log.tools.info({ action, query, url }, 'Browse tool starting');
 
@@ -81,7 +81,7 @@ export const browseTool = tool({
         model: {
           modelName: 'openai/clarity-fast',
           apiKey: serviceSecret,
-          baseURL: `${clarityApiUrl}/v1`,
+          baseURL: `${oxySpaceApiUrl}/v1`,
         },
       });
       await stagehand.init();

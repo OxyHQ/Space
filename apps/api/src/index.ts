@@ -41,7 +41,7 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '../.env') });
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3001', 10);
+const PORT = parseInt(process.env.PORT || '4001', 10);
 
 // Create HTTP server with optimized settings for streaming
 const server = http.createServer({
