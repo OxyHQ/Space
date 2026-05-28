@@ -4,6 +4,7 @@ import apiClient from "../api/client";
 import { API_ROUTES } from "../api/routes";
 import { queryKeys } from "./query-keys";
 import type {
+  BreadcrumbResponse,
   Page,
   PageResponse,
   PagesListResponse,
@@ -21,8 +22,16 @@ interface UpdatePageInput {
   title?: string;
   icon?: string | null;
   cover?: string | null;
+  coverPosition?: number;
   parentId?: string | null;
   archived?: boolean;
+  /**
+   * Owned by the Page chrome agent (#14). Forwarded as-is to the API; if the
+   * backend hasn't shipped the column yet, the update is a safe no-op.
+   */
+  favorited?: boolean;
+  /** Sibling order; consumed by drag-to-reorder. */
+  order?: number;
 }
 
 export function usePages(workspaceId: string | null) {
@@ -118,16 +127,113 @@ export function useUpdatePage() {
 interface DeletePageInput {
   id: string;
   workspaceId: string;
+  /** When true, permanently delete from MongoDB (owner only). */
+  hard?: boolean;
 }
 
 export function useDeletePage() {
   const queryClient = useQueryClient();
 
   return useMutation<void, Error, DeletePageInput>({
+    mutationFn: async ({ id, hard }) => {
+      await apiClient.delete(API_ROUTES.pages.delete(id), {
+        params: hard ? { hard: "true" } : undefined,
+      });
+    },
+    onSuccess: (_data, { workspaceId, id }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.pages.list(workspaceId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.pages.archived(workspaceId),
+      });
+      queryClient.removeQueries({ queryKey: queryKeys.pages.detail(id) });
+    },
+  });
+}
+
+/**
+ * Server-side duplicate (POST /pages/:id/duplicate). The backend copies the
+ * page + its blocks and returns the new page document.
+ */
+export function useDuplicatePage() {
+  const queryClient = useQueryClient();
+
+  return useMutation<Page, Error, { id: string; workspaceId: string }>({
     mutationFn: async ({ id }) => {
-      await apiClient.delete(API_ROUTES.pages.delete(id));
+      const res = await apiClient.post<PageResponse>(
+        API_ROUTES.pages.duplicate(id),
+      );
+      return res.data.page;
+    },
+    onSuccess: (_page, { workspaceId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.pages.list(workspaceId),
+      });
+    },
+  });
+}
+
+/**
+ * Fetches the breadcrumb chain for a page (root → current). Used by the
+ * page-chrome breadcrumb header. Cached separately from the page detail.
+ */
+export function useBreadcrumb(pageId: string | null | undefined) {
+  const { isAuthenticated } = useOxy();
+
+  return useQuery<BreadcrumbResponse>({
+    queryKey: pageId
+      ? queryKeys.pages.breadcrumb(pageId)
+      : ["page", "none", "breadcrumb"],
+    queryFn: async () => {
+      if (!pageId) throw new Error("Page id required");
+      const res = await apiClient.get(API_ROUTES.pages.breadcrumb(pageId));
+      return res.data;
+    },
+    enabled: isAuthenticated && Boolean(pageId),
+    staleTime: 1000 * 30,
+  });
+}
+
+/**
+ * Lists archived pages for a workspace. Backs the /trash route.
+ */
+export function useArchivedPages(workspaceId: string | null) {
+  const { isAuthenticated } = useOxy();
+
+  return useQuery<PagesListResponse>({
+    queryKey: queryKeys.pages.archived(workspaceId),
+    queryFn: async () => {
+      const res = await apiClient.get(API_ROUTES.pages.list, {
+        params: workspaceId
+          ? { workspaceId, archivedOnly: "true", includeArchived: "true" }
+          : undefined,
+      });
+      return res.data;
+    },
+    staleTime: 1000 * 10,
+    enabled: isAuthenticated && Boolean(workspaceId),
+  });
+}
+
+/**
+ * Empties the workspace trash (owner only). Cascade-deletes archived pages
+ * and their blocks.
+ */
+export function useEmptyTrash() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ deleted: number }, Error, { workspaceId: string }>({
+    mutationFn: async ({ workspaceId }) => {
+      const res = await apiClient.post<{ success: boolean; deleted: number }>(
+        API_ROUTES.workspaces.emptyTrash(workspaceId),
+      );
+      return { deleted: res.data.deleted };
     },
     onSuccess: (_data, { workspaceId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.pages.archived(workspaceId),
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.pages.list(workspaceId),
       });

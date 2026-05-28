@@ -26,6 +26,10 @@ import workspacesRouter from './routes/workspaces.js';
 import shareLinksRouter from './routes/share-links.js';
 import pagesRouter from './routes/pages.js';
 import blocksRouter from './routes/blocks.js';
+import databasesRouter from './routes/databases.js';
+import commentsRouter from './routes/comments.js';
+import uploadsRouter, { LOCAL_UPLOAD_ROOT } from './routes/uploads.js';
+import embedRouter from './routes/embed.js';
 
 // Register hooks (side-effect import)
 import './lib/hooks/index.js';
@@ -170,7 +174,13 @@ app.use('/notifications', notificationsRouter);
 app.use('/workspaces', workspacesRouter);
 app.use(shareLinksRouter);
 app.use(blocksRouter);
+app.use(commentsRouter);
 app.use('/pages', pagesRouter);
+app.use('/databases', databasesRouter);
+app.use('/uploads', uploadsRouter);
+app.use('/embed', embedRouter);
+// Serve local-disk uploads (only used when Spaces creds are not configured)
+app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT, { fallthrough: true }));
 app.use('/internal', internalRouter);
 
 // Root route
@@ -194,6 +204,10 @@ app.get('/', (_req, res) => {
       '/workspaces',
       '/pages',
       '/blocks',
+      '/databases',
+      '/comments',
+      '/uploads',
+      '/embed',
       '/share-links',
       '/share/:token',
       '/internal',

@@ -1,24 +1,35 @@
 import * as React from "react";
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
-  TextInput,
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { MessageCircle } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Editor } from "@/components/editor/editor";
 import { ShareButton } from "@/components/sharing";
+import { CommentPanel } from "@/components/comments/comment-panel";
+import { PageChrome, PageHeader } from "@/components/page-chrome";
+import { RowPropertiesPanel } from "@/components/database/row-properties-panel";
 import { useColorScheme } from "@/lib/useColorScheme";
-import { usePage, useUpdatePage } from "@/lib/hooks/use-pages";
+import { usePage } from "@/lib/hooks/use-pages";
+import { usePageComments } from "@/lib/hooks/use-comments";
+import { useDatabase } from "@/lib/hooks/use-databases";
+import { useTrackRecentPage } from "@/lib/hooks/use-track-recent-page";
+import type { DatabaseRow, PropertyValue } from "@/lib/types/databases";
+import type { Page } from "@/lib/types/pages";
 
 /**
- * Page detail route. Renders editable title + the block editor.
+ * Page detail route. Wraps the block editor with `PageChrome` (cover + icon
+ * pickers, breadcrumb, favourite star, actions menu) and renders the title /
+ * cover via `PageHeader` inside the page's ScrollView so they scroll with
+ * the editor content.
  *
- * Title saves on blur (web) / endEditing (native). Editor handles its own
- * block-level autosave debouncing.
+ * Database rows get a `RowPropertiesPanel` between the header and the
+ * editor; comments appear in a right-side `CommentPanel` toggled from the
+ * top bar.
  */
 export default function PageDetailRoute() {
   const params = useLocalSearchParams<{ pageId?: string | string[] }>();
@@ -41,9 +52,24 @@ function PageDetail({ pageId }: { pageId: string }) {
   const router = useRouter();
   const { colors } = useColorScheme();
   const { data, isLoading, isError, error } = usePage(pageId);
-  const updatePage = useUpdatePage();
+  const { data: commentsData } = usePageComments(pageId, false);
+  useTrackRecentPage(pageId);
 
-  const [titleDraft, setTitleDraft] = React.useState<string | null>(null);
+  const [commentPanel, setCommentPanel] = React.useState<{
+    open: boolean;
+    focusedBlockId: string | null;
+  }>({ open: false, focusedBlockId: null });
+
+  const openCommentCount = React.useMemo(() => {
+    const comments = commentsData?.comments ?? [];
+    return comments.filter(
+      (c) => c.parentCommentId === null && c.resolvedAt === null,
+    ).length;
+  }, [commentsData?.comments]);
+
+  const handleOpenPanel = (focusedBlockId: string | null = null) => {
+    setCommentPanel({ open: true, focusedBlockId });
+  };
 
   if (isLoading) {
     return (
@@ -74,71 +100,87 @@ function PageDetail({ pageId }: { pageId: string }) {
   }
 
   const page = data.page;
-  const title = titleDraft ?? page.title;
 
-  const handleTitleBlur = () => {
-    if (titleDraft === null) return;
-    if (titleDraft === page.title) {
-      setTitleDraft(null);
-      return;
-    }
-    updatePage.mutate({ id: page._id, title: titleDraft });
-    setTitleDraft(null);
-  };
+  const rightHeader = (
+    <View className="flex-row items-center gap-2">
+      <Pressable
+        onPress={() => handleOpenPanel(null)}
+        accessibilityLabel="Open comments"
+        className="flex-row items-center gap-1.5 rounded-md px-2 py-1 hover:bg-muted"
+      >
+        <MessageCircle size={14} color={colors.foreground} />
+        <Text className="text-xs font-medium text-foreground">
+          {openCommentCount > 0 ? openCommentCount : ""} Comments
+        </Text>
+      </Pressable>
+      <ShareButton pageId={page._id} />
+    </View>
+  );
 
   return (
-    <View className="flex-1 bg-background">
-      {/* Top bar with Share button. Phase 2 frontend integration point. */}
-      <View className="h-12 px-4 md:px-6 flex-row items-center justify-end border-b border-border/30">
-        <ShareButton pageId={page._id} />
+    <PageChrome page={page} rightHeader={rightHeader}>
+      <View className="flex-1 flex-row">
+        <ScrollView
+          className="flex-1"
+          contentContainerClassName="pb-12"
+          keyboardShouldPersistTaps="handled"
+        >
+          <PageHeader page={page} />
+          <View className="px-6 md:px-10 max-w-3xl w-full mx-auto pt-4">
+            <DatabaseRowProperties page={page} />
+            <Editor
+              pageId={page._id}
+              onOpenBlockComments={(blockId) => handleOpenPanel(blockId)}
+            />
+          </View>
+        </ScrollView>
+
+        <CommentPanel
+          pageId={page._id}
+          workspaceId={page.workspaceId}
+          open={commentPanel.open}
+          focusedBlockId={commentPanel.focusedBlockId}
+          onClose={() =>
+            setCommentPanel({ open: false, focusedBlockId: null })
+          }
+        />
       </View>
-
-      <ScrollView
-        className="flex-1"
-        contentContainerClassName="px-6 md:px-10 py-8 max-w-3xl w-full mx-auto"
-        keyboardShouldPersistTaps="handled"
-      >
-        <View className="gap-2 pb-4">
-          {page.icon ? (
-            <Text className="text-5xl leading-none">{page.icon}</Text>
-          ) : null}
-          <TitleInput
-            value={title}
-            onChangeText={setTitleDraft}
-            onBlur={handleTitleBlur}
-          />
-        </View>
-
-        <Editor pageId={page._id} />
-      </ScrollView>
-    </View>
+    </PageChrome>
   );
 }
 
-interface TitleInputProps {
-  value: string;
-  onChangeText: (next: string) => void;
-  onBlur: () => void;
-}
-
-function TitleInput({ value, onChangeText, onBlur }: TitleInputProps) {
-  const { colors } = useColorScheme();
+/**
+ * Renders the database row property panel when the underlying page is a
+ * database row (`databaseId` is set). Lazy-loads the parent database so
+ * the schema is available for the property cells.
+ *
+ * Returns `null` if this page is a regular doc — leaves the existing
+ * editor layout untouched.
+ */
+function DatabaseRowProperties({ page }: { page: Page }) {
+  const databaseId =
+    typeof page.databaseId === "string" ? page.databaseId : null;
+  const { data } = useDatabase(databaseId ?? undefined);
+  if (!databaseId || !data?.database) return null;
+  const row: DatabaseRow = {
+    id: page._id,
+    _id: page._id,
+    workspaceId: page.workspaceId,
+    parentId: page.parentId,
+    databaseId,
+    title: page.title,
+    icon: page.icon ?? null,
+    cover: page.cover ?? null,
+    ownerId: page.ownerId,
+    archived: page.archived,
+    order: 0,
+    properties: (page.properties ?? {}) as Record<string, PropertyValue>,
+    createdAt: page.createdAt,
+    updatedAt: page.updatedAt,
+  };
   return (
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      onBlur={onBlur}
-      placeholder="Untitled"
-      placeholderTextColor={colors.mutedForeground}
-      className="text-4xl font-bold text-foreground"
-      multiline
-      scrollEnabled={false}
-      style={
-        Platform.OS === "web"
-          ? { outlineWidth: 0, borderWidth: 0, padding: 0 }
-          : undefined
-      }
-      underlineColorAndroid="transparent"
-    />
+    <View className="pb-6 border-b border-border/30 mb-4">
+      <RowPropertiesPanel database={data.database} row={row} />
+    </View>
   );
 }

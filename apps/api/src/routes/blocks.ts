@@ -4,7 +4,9 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import {
   Block,
+  BLOCK_COLORS,
   BLOCK_TYPES,
+  type BlockColor,
   type BlockContent,
   type BlockType,
   type IBlock,
@@ -25,6 +27,36 @@ const objectIdSchema = z
 
 const blockTypeSchema = z.enum(BLOCK_TYPES as readonly [BlockType, ...BlockType[]]);
 
+const blockColorSchema = z.enum(
+  BLOCK_COLORS as readonly [BlockColor, ...BlockColor[]],
+);
+
+/**
+ * Rich-text segment — single run of text plus optional annotations.
+ * Editors that don't read `segments` keep working against `text`; both stay
+ * in sync at the route boundary (see `syncSegmentsAndText`).
+ */
+const segmentSchema = z.object({
+  text: z.string(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+  strike: z.boolean().optional(),
+  code: z.boolean().optional(),
+  color: blockColorSchema.optional(),
+  background: blockColorSchema.optional(),
+  link: z.string().optional(),
+});
+
+/**
+ * Common optional block-level styling fields. Kept on every content variant
+ * so client code can read `content.color` uniformly.
+ */
+const styleFields = {
+  color: blockColorSchema.optional(),
+  backgroundColor: blockColorSchema.optional(),
+} as const;
+
 /**
  * Per-type content schemas with defaults. Concretely typed so each
  * `.parse()` returns the exact `BlockContent` variant without casts.
@@ -32,20 +64,191 @@ const blockTypeSchema = z.enum(BLOCK_TYPES as readonly [BlockType, ...BlockType[
  * Defaults are applied via Zod (`.default()`) so missing keys are filled
  * before validation and the output types remain non-optional strings/bools.
  */
-const textContentSchema = z.object({ text: z.string().default('') });
+const textContentSchema = z.object({
+  text: z.string().default(''),
+  segments: z.array(segmentSchema).optional(),
+  ...styleFields,
+});
 const todoContentSchema = z.object({
   text: z.string().default(''),
+  segments: z.array(segmentSchema).optional(),
   checked: z.boolean().default(false),
+  ...styleFields,
 });
 const codeContentSchema = z.object({
   text: z.string().default(''),
   language: z.string().default('plain'),
+  ...styleFields,
 });
 const calloutContentSchema = z.object({
   text: z.string().default(''),
+  segments: z.array(segmentSchema).optional(),
   icon: z.string().default('lightbulb'),
+  ...styleFields,
 });
-const dividerContentSchema = z.object({}).strict();
+const toggleContentSchema = z.object({
+  text: z.string().default(''),
+  segments: z.array(segmentSchema).optional(),
+  expanded: z.boolean().default(true),
+  ...styleFields,
+});
+const dividerContentSchema = z.object(styleFields);
+
+// --- Phase 3: media blocks ---
+const imageAlignmentSchema = z.enum(['left', 'center', 'right', 'full']);
+const imageContentSchema = z.object({
+  url: z.string().default(''),
+  caption: z.string().optional(),
+  alt: z.string().optional(),
+  width: z.number().finite().positive().optional(),
+  alignment: imageAlignmentSchema.optional(),
+  ...styleFields,
+});
+
+const videoSourceSchema = z.enum(['upload', 'youtube', 'vimeo', 'loom', 'other']);
+const videoContentSchema = z.object({
+  url: z.string().default(''),
+  source: videoSourceSchema.default('other'),
+  caption: z.string().optional(),
+  ...styleFields,
+});
+
+const audioContentSchema = z.object({
+  url: z.string().default(''),
+  caption: z.string().optional(),
+  ...styleFields,
+});
+
+const fileContentSchema = z.object({
+  url: z.string().default(''),
+  name: z.string().default(''),
+  size: z.number().int().nonnegative().default(0),
+  mimeType: z.string().default('application/octet-stream'),
+  ...styleFields,
+});
+
+const pdfContentSchema = z.object({
+  url: z.string().default(''),
+  ...styleFields,
+});
+
+// --- Phase 3: embeds ---
+const bookmarkContentSchema = z.object({
+  url: z.string().default(''),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  image: z.string().optional(),
+  favicon: z.string().optional(),
+  ...styleFields,
+});
+
+const embedContentSchema = z.object({
+  url: z.string().default(''),
+  source: z.string().optional(),
+  ...styleFields,
+});
+
+// --- Phase 3: layout ---
+const columnsContentSchema = z.object({
+  columnCount: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(2),
+  ...styleFields,
+});
+
+const columnContentSchema = z.object({
+  /** Optional 0..1 fractional ratio. Defaults to even split when unset. */
+  ratio: z.number().min(0).max(1).optional(),
+  ...styleFields,
+});
+
+const tableContentSchema = z.object({
+  rows: z.number().int().positive().default(2),
+  cols: z.number().int().positive().default(2),
+  withHeader: z.boolean().default(false),
+  ...styleFields,
+});
+
+const tableRowContentSchema = z.object(styleFields);
+
+const tableCellContentSchema = z.object({
+  text: z.string().default(''),
+  segments: z.array(segmentSchema).optional(),
+  ...styleFields,
+});
+
+// --- Phase 3: interactive ---
+const buttonActionSchema = z.enum([
+  'duplicate-template',
+  'new-page',
+  'navigate',
+  'webhook',
+]);
+const buttonContentSchema = z.object({
+  label: z.string().default('Button'),
+  action: buttonActionSchema.default('navigate'),
+  /** Action-specific params kept loose — validated by callers when fired. */
+  url: z.string().optional(),
+  pageId: objectIdSchema.optional(),
+  templateId: objectIdSchema.optional(),
+  webhookUrl: z.string().optional(),
+  ...styleFields,
+});
+
+const linkToPageContentSchema = z.object({
+  pageId: objectIdSchema.default('000000000000000000000000'),
+  ...styleFields,
+});
+
+const syncBlockContentSchema = z.object({
+  sourceBlockId: objectIdSchema.optional(),
+  ...styleFields,
+});
+
+const breadcrumbContentSchema = z.object(styleFields);
+const tableOfContentsContentSchema = z.object(styleFields);
+
+// --- Phase 3: math + diagram ---
+const equationContentSchema = z.object({
+  latex: z.string().default(''),
+  ...styleFields,
+});
+
+const mermaidContentSchema = z.object({
+  code: z.string().default(''),
+  ...styleFields,
+});
+
+// --- Phase 4: database ---
+const inlineDatabaseContentSchema = z.object({
+  /**
+   * The Database to render. ObjectId of `Database` document. Defaults to
+   * a placeholder so the type-changed-to-inline_database path doesn't
+   * fail validation; UI immediately replaces it after creating the DB.
+   */
+  databaseId: objectIdSchema.default('000000000000000000000000'),
+  /** Optional starting view; falls back to the database's default view. */
+  viewId: objectIdSchema.optional(),
+  ...styleFields,
+});
+
+/**
+ * Keep plain `text` consistent with `segments`. When both are present, the
+ * concatenated segment text wins (more expressive). When only `text` is
+ * present, segments are left undefined so older readers keep working.
+ *
+ * Mutates and returns the same object — caller owns it (fresh from a Zod
+ * parse), so this is safe and avoids spread-typing pain across heterogeneous
+ * content variants.
+ */
+function syncTextFromSegments(value: BlockContent): BlockContent {
+  const segments = value.segments;
+  if (Array.isArray(segments) && segments.length > 0) {
+    const flat = segments
+      .map((s) => (s && typeof s === 'object' && 'text' in s ? String((s as { text: unknown }).text ?? '') : ''))
+      .join('');
+    value.text = flat;
+  }
+  return value;
+}
 
 /**
  * Normalize content by filling in type-specific defaults and validating shape.
@@ -65,15 +268,57 @@ function normalizeContent(type: BlockType, content: unknown): BlockContent {
     case 'bulleted_list_item':
     case 'numbered_list_item':
     case 'quote':
-      return textContentSchema.parse(incoming);
+      return syncTextFromSegments(textContentSchema.parse(incoming));
     case 'todo':
-      return todoContentSchema.parse(incoming);
+      return syncTextFromSegments(todoContentSchema.parse(incoming));
     case 'code':
       return codeContentSchema.parse(incoming);
     case 'callout':
-      return calloutContentSchema.parse(incoming);
+      return syncTextFromSegments(calloutContentSchema.parse(incoming));
+    case 'toggle':
+      return syncTextFromSegments(toggleContentSchema.parse(incoming));
     case 'divider':
-      return dividerContentSchema.parse({});
+      return dividerContentSchema.parse(incoming);
+    case 'image':
+      return imageContentSchema.parse(incoming);
+    case 'video':
+      return videoContentSchema.parse(incoming);
+    case 'audio':
+      return audioContentSchema.parse(incoming);
+    case 'file':
+      return fileContentSchema.parse(incoming);
+    case 'pdf':
+      return pdfContentSchema.parse(incoming);
+    case 'bookmark':
+      return bookmarkContentSchema.parse(incoming);
+    case 'embed':
+      return embedContentSchema.parse(incoming);
+    case 'columns':
+      return columnsContentSchema.parse(incoming);
+    case 'column':
+      return columnContentSchema.parse(incoming);
+    case 'table':
+      return tableContentSchema.parse(incoming);
+    case 'table_row':
+      return tableRowContentSchema.parse(incoming);
+    case 'table_cell':
+      return syncTextFromSegments(tableCellContentSchema.parse(incoming));
+    case 'button':
+      return buttonContentSchema.parse(incoming);
+    case 'link_to_page':
+      return linkToPageContentSchema.parse(incoming);
+    case 'sync_block':
+      return syncBlockContentSchema.parse(incoming);
+    case 'breadcrumb':
+      return breadcrumbContentSchema.parse(incoming);
+    case 'table_of_contents':
+      return tableOfContentsContentSchema.parse(incoming);
+    case 'equation':
+      return equationContentSchema.parse(incoming);
+    case 'mermaid':
+      return mermaidContentSchema.parse(incoming);
+    case 'inline_database':
+      return inlineDatabaseContentSchema.parse(incoming);
   }
 }
 

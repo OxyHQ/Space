@@ -12,6 +12,8 @@ import {
   WORKSPACE_ROLES,
   type WorkspaceRole,
 } from '../models/workspace-member.js';
+import { Page } from '../models/page.js';
+import { Block } from '../models/block.js';
 import { log } from '../lib/logger.js';
 
 const router = Router();
@@ -578,6 +580,48 @@ router.delete(
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to remove member');
       res.status(500).json({ error: 'Failed to remove member' });
+    }
+  },
+);
+
+/**
+ * POST /api/workspaces/:workspaceId/trash/empty
+ *
+ * Hard-deletes every archived page in the workspace and their blocks.
+ * Owner only — irreversible. Returns the count of removed pages.
+ */
+router.post(
+  '/:workspaceId/trash/empty',
+  authenticateToken,
+  requireWorkspaceMember,
+  requireRole('owner'),
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.workspaceDoc) {
+        res.status(500).json({ error: 'Workspace context not loaded' });
+        return;
+      }
+
+      const archivedPages = await Page.find({
+        workspaceId: req.workspaceDoc._id,
+        archived: true,
+      })
+        .select('_id')
+        .lean();
+
+      if (archivedPages.length === 0) {
+        res.json({ success: true, deleted: 0 });
+        return;
+      }
+
+      const ids = archivedPages.map((p) => p._id);
+      await Block.deleteMany({ pageId: { $in: ids } });
+      const result = await Page.deleteMany({ _id: { $in: ids } });
+
+      res.json({ success: true, deleted: result.deletedCount ?? ids.length });
+    } catch (error: unknown) {
+      log.general.error({ err: error }, 'Failed to empty workspace trash');
+      res.status(500).json({ error: 'Failed to empty trash' });
     }
   },
 );

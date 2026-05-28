@@ -1,20 +1,95 @@
 import mongoose, { Schema, Model, Document } from 'mongoose';
 
 /**
- * Block content payload — shape depends on `type`. Phase 1 keeps content
- * simple (no inline annotations); Phase 2+ may evolve specific variants.
+ * Block content payload — shape depends on `type`. The route layer
+ * (`routes/blocks.ts`) is the source of truth for valid shapes and
+ * normalizes via Zod schemas before persisting.
  *
- * The route layer (`routes/blocks.ts`) is the source of truth for valid
- * shapes per type — it normalizes via Zod schemas before persisting.
+ * Phase 2 (editor v2) adds:
+ *   - `toggle` block type with `{ text, segments, expanded }`
+ *   - rich-text `segments: Segment[]` alongside plain `text` for text blocks
+ *     (text remains the canonical plain-text fallback for clients that don't
+ *     read segments yet — both stay in sync on write)
+ *   - optional block-level `color` / `backgroundColor` (Notion-style named
+ *     colors: default, gray, brown, orange, yellow, green, blue, purple,
+ *     pink, red)
  *
  * Documented variants (validated at the route boundary):
  *   - paragraph | heading_1..3 | bulleted_list_item | numbered_list_item | quote:
- *       { text: string }
- *   - todo:    { text: string, checked: boolean }
- *   - code:    { text: string, language: string }
- *   - callout: { text: string, icon: string }
- *   - divider: {}
+ *       { text: string, segments?: Segment[], color?, backgroundColor? }
+ *   - todo:    { text, segments?, checked, color?, backgroundColor? }
+ *   - code:    { text, language, color?, backgroundColor? }
+ *   - callout: { text, segments?, icon, color?, backgroundColor? }
+ *   - toggle:  { text, segments?, expanded, color?, backgroundColor? }
+ *   - divider: { color?, backgroundColor? }
+ *
+ * Phase 3 (more block types) adds:
+ *   - image:        { url, caption?, alt?, width?, alignment? }
+ *   - video:        { url, source: 'upload'|'youtube'|'vimeo'|'loom'|'other', caption? }
+ *   - audio:        { url, caption? }
+ *   - file:         { url, name, size, mimeType }
+ *   - pdf:          { url }
+ *   - bookmark:     { url, title?, description?, image?, favicon? }
+ *   - embed:        { url, source? }
+ *   - columns:      { columnCount: 2|3|4 } (container; children are `column` blocks)
+ *   - column:       { } (container; children are normal blocks)
+ *   - table:        { rows, cols, withHeader } (children are table_row → table_cell)
+ *   - table_row:    { } (children are table_cell)
+ *   - table_cell:   { text, segments? }
+ *   - button:       { label, action, ...params }
+ *   - link_to_page: { pageId }
+ *   - sync_block:   { sourceBlockId }
+ *   - breadcrumb:   { }
+ *   - table_of_contents: { }
+ *   - equation:     { latex }
+ *   - mermaid:      { code }
+ *
+ * Phase 4 (databases) adds:
+ *   - inline_database: { databaseId, viewId? } — renders an embedded
+ *     database view (the actual data lives in the Database + Page rows
+ *     models, not in the block's content). Phase 4 owns the renderer.
+ *
+ * Segments enable inline formatting (bold/italic/underline/strike/code/link)
+ * and per-segment text/background color without exposing rich text to APIs
+ * that only consume plain `text`.
  */
+export interface Segment {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  color?: BlockColor;
+  background?: BlockColor;
+  link?: string;
+}
+
+export type BlockColor =
+  | 'default'
+  | 'gray'
+  | 'brown'
+  | 'orange'
+  | 'yellow'
+  | 'green'
+  | 'blue'
+  | 'purple'
+  | 'pink'
+  | 'red';
+
+export const BLOCK_COLORS: readonly BlockColor[] = [
+  'default',
+  'gray',
+  'brown',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'red',
+] as const;
+
 export type BlockContent = Record<string, unknown>;
 
 export type BlockType =
@@ -28,7 +103,34 @@ export type BlockType =
   | 'quote'
   | 'divider'
   | 'code'
-  | 'callout';
+  | 'callout'
+  | 'toggle'
+  // Media
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'file'
+  | 'pdf'
+  // Embeds
+  | 'bookmark'
+  | 'embed'
+  // Layout
+  | 'columns'
+  | 'column'
+  | 'table'
+  | 'table_row'
+  | 'table_cell'
+  // Interactive
+  | 'button'
+  | 'link_to_page'
+  | 'sync_block'
+  | 'breadcrumb'
+  | 'table_of_contents'
+  // Math + diagram
+  | 'equation'
+  | 'mermaid'
+  // Database
+  | 'inline_database';
 
 export const BLOCK_TYPES: readonly BlockType[] = [
   'paragraph',
@@ -42,6 +144,27 @@ export const BLOCK_TYPES: readonly BlockType[] = [
   'divider',
   'code',
   'callout',
+  'toggle',
+  'image',
+  'video',
+  'audio',
+  'file',
+  'pdf',
+  'bookmark',
+  'embed',
+  'columns',
+  'column',
+  'table',
+  'table_row',
+  'table_cell',
+  'button',
+  'link_to_page',
+  'sync_block',
+  'breadcrumb',
+  'table_of_contents',
+  'equation',
+  'mermaid',
+  'inline_database',
 ] as const;
 
 /**

@@ -9,7 +9,9 @@ export type NotificationType =
   | 'reminder'
   | 'agent_task_complete'
   | 'chat_response_ready'
-  | 'oxy_service';
+  | 'oxy_service'
+  | 'mention'
+  | 'comment_reply';
 
 export type NotificationChannel = 'push' | 'telegram' | 'discord' | 'whatsapp' | 'slack' | 'in_app';
 export type NotificationStatus = 'pending' | 'sent' | 'read' | 'dismissed';
@@ -43,7 +45,7 @@ const NotificationSchema = new Schema<INotification>({
   type: {
     type: String,
     required: true,
-    enum: ['trigger_result', 'proactive_insight', 'daily_briefing', 'price_alert', 'integration_event', 'reminder', 'agent_task_complete', 'chat_response_ready', 'oxy_service'],
+    enum: ['trigger_result', 'proactive_insight', 'daily_briefing', 'price_alert', 'integration_event', 'reminder', 'agent_task_complete', 'chat_response_ready', 'oxy_service', 'mention', 'comment_reply'],
   },
   title: { type: String, required: true },
   body: { type: String, required: true },

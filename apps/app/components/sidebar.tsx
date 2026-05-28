@@ -14,6 +14,7 @@ import {
   ChevronsRight,
   LogIn,
   UserPlus,
+  Plus,
 } from "lucide-react-native";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useUIStore } from "@/lib/stores/ui-store";
@@ -26,7 +27,21 @@ import { OxySpaceWordmark } from "@/components/ui/oxy-space-wordmark";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { PageTree } from "@/components/pages/page-tree";
+import { useWorkspaceStore } from "@/lib/stores/workspace-store";
+import { useCreatePage } from "@/lib/hooks/use-pages";
+import { useUnreadCount } from "@/lib/hooks/use-notifications";
+import {
+  SidebarSearchButton,
+  SidebarInboxButton,
+  SidebarSettingsButton,
+  SidebarTrashButton,
+  RecentsSection,
+  FavoritesSection,
+  PrivateSection,
+  SharedSection,
+  TemplatesSection,
+  DatabaseSection,
+} from "@/components/sidebar-sections";
 
 /* ================================================================
    Root Sidebar — routes to settings sidebar when on /settings
@@ -40,8 +55,7 @@ export function Sidebar() {
 }
 
 /* ================================================================
-   Workspace sidebar — Oxy Space chrome (logo + auth)
-   Pages/databases will be added in Phase 1.
+   Workspace sidebar — Notion-style sections
    ================================================================ */
 
 const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
@@ -54,8 +68,13 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebarCollapsed = useUIStore((s) => s.toggleSidebarCollapsed);
+  const currentWorkspaceId = useWorkspaceStore((s) => s.currentWorkspaceId);
+  const createPage = useCreatePage();
 
   const { user, isAuthenticated, logout, showBottomSheet } = useOxy();
+  // Surface the Comments agent's unread count on the Inbox row.
+  const { data: unreadData } = useUnreadCount();
+  const unreadCount = unreadData?.count ?? 0;
 
   // Only allow collapse on large screens
   const isCollapsed = isLargeScreen && sidebarCollapsed;
@@ -89,6 +108,19 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
     () => router.push("/(app)/notifications"),
     [router],
   );
+  const handleCreatePage = React.useCallback(async () => {
+    if (!currentWorkspaceId) return;
+    try {
+      const page = await createPage.mutateAsync({
+        workspaceId: currentWorkspaceId,
+        parentId: null,
+        title: "",
+      });
+      router.push(`/p/${page._id}`);
+    } catch {
+      /* mutation surfaces errors via state */
+    }
+  }, [createPage, currentWorkspaceId, router]);
 
   const displayName = React.useMemo(() => {
     if (!user) return t("common.user");
@@ -201,16 +233,55 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
         )}
       </View>
 
-      {/* Scrollable middle — Phase 1 page tree (Phase 2 will add workspace switcher above). */}
+      {/* Scrollable middle: search + nav + sections */}
       <ScrollView
         className="min-h-0 flex-1"
         showsVerticalScrollIndicator={false}
       >
-        <PageTree />
+        {isAuthenticated ? (
+          <View className="px-1 py-1 gap-0.5">
+            <SidebarSearchButton />
+            <SidebarInboxButton unreadCount={unreadCount} />
+            <SidebarSettingsButton />
+          </View>
+        ) : null}
+
+        {isAuthenticated && currentWorkspaceId ? (
+          <View className="mt-2">
+            <RecentsSection />
+            <FavoritesSection />
+            <PrivateSection />
+            <SharedSection />
+            <DatabaseSection />
+            <TemplatesSection />
+          </View>
+        ) : null}
+
+        {isAuthenticated ? (
+          <View className="mt-2 px-1">
+            <SidebarTrashButton />
+          </View>
+        ) : null}
       </ScrollView>
 
+      {/* + New page (visible when authenticated) */}
+      {isAuthenticated && currentWorkspaceId ? (
+        <View className="px-2 pt-1">
+          <Pressable
+            onPress={handleCreatePage}
+            accessibilityLabel="New page"
+            accessibilityRole="button"
+            disabled={createPage.isPending}
+            className="flex-row items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60 active:bg-muted/60"
+          >
+            <Plus size={14} color={colors.mutedForeground} />
+            <Text className="text-sm text-muted-foreground">New page</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Divider */}
-      <View className="mx-2 border-t border-border/30" />
+      <View className="mx-2 border-t border-border/30 mt-2" />
 
       {/* Footer: user avatar / sign-in */}
       <View className="flex flex-col gap-2 mt-auto shrink-0 p-2 pt-1">
@@ -220,9 +291,17 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
               <Pressable
                 accessibilityLabel="Account menu"
                 accessibilityRole="button"
-                className="rounded-full h-10 w-10 flex p-1 overflow-visible items-center justify-center"
+                className="flex-row items-center gap-2 rounded-md px-1 py-1 hover:bg-muted/60"
               >
-                <UserAvatar size={32} />
+                <View className="rounded-full h-9 w-9 p-1 overflow-visible items-center justify-center">
+                  <UserAvatar size={28} />
+                </View>
+                <Text
+                  className="flex-1 text-sm font-medium text-foreground"
+                  numberOfLines={1}
+                >
+                  {displayName}
+                </Text>
               </Pressable>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content>
@@ -265,7 +344,9 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
               <DropdownMenu.Item key="notifications" onSelect={handleNotifications}>
                 <DropdownMenu.ItemIcon ios={{ name: "bell" }} />
                 <DropdownMenu.ItemTitle>
-                  {t("sidebar.notifications")}
+                  {unreadCount > 0
+                    ? `${t("sidebar.notifications")} (${unreadCount})`
+                    : t("sidebar.notifications")}
                 </DropdownMenu.ItemTitle>
               </DropdownMenu.Item>
               <DropdownMenu.Item key="settings" onSelect={handleSettings}>
