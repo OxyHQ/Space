@@ -2,8 +2,9 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { OxyProvider, useOxy } from '@oxyhq/services';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
 import { Platform, View } from 'react-native';
 import { vars } from 'nativewind';
@@ -78,6 +79,16 @@ function AppContent() {
 }
 
 function RootLayout() {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        retry: 1,
+        refetchOnWindowFocus: false,
+      },
+    },
+  }));
+
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Inter: require('../assets/fonts/Inter-VariableFont_opsz,wght.ttf'),
@@ -97,12 +108,14 @@ function RootLayout() {
 
   return (
     <AppErrorBoundary>
-      <OxyProvider
-        baseURL={OXY_API_URL}
-        authRedirectUri={Platform.OS !== 'web' ? AUTH_REDIRECT_URI : undefined}
-      >
-        <AppContent />
-      </OxyProvider>
+      <QueryClientProvider client={queryClient}>
+        <OxyProvider
+          baseURL={OXY_API_URL}
+          authRedirectUri={Platform.OS !== 'web' ? AUTH_REDIRECT_URI : undefined}
+        >
+          <AppContent />
+        </OxyProvider>
+      </QueryClientProvider>
     </AppErrorBoundary>
   );
 }
