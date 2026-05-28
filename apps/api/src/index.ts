@@ -167,10 +167,10 @@ app.use('/models', modelsStatsRouter);
 app.use('/analytics', analyticsRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/notifications', notificationsRouter);
-app.use('/api/workspaces', workspacesRouter);
-app.use('/api/pages', pagesRouter);
-app.use('/api', shareLinksRouter);
-app.use('/api', blocksRouter);
+app.use('/workspaces', workspacesRouter);
+app.use(shareLinksRouter);
+app.use(blocksRouter);
+app.use('/pages', pagesRouter);
 app.use('/internal', internalRouter);
 
 // Root route
@@ -191,10 +191,11 @@ app.get('/', (_req, res) => {
       '/analytics',
       '/webhooks',
       '/notifications',
-      '/api/workspaces',
-      '/api/pages',
-      '/api/blocks',
-      '/api/share',
+      '/workspaces',
+      '/pages',
+      '/blocks',
+      '/share-links',
+      '/share/:token',
       '/internal',
     ]
   });

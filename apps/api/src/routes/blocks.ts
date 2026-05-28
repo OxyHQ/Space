@@ -96,16 +96,7 @@ const updateBlockSchema = z
   });
 
 const reorderSchema = z.object({
-  pageId: objectIdSchema,
-  items: z
-    .array(
-      z.object({
-        id: objectIdSchema,
-        order: z.number().finite(),
-        parentBlockId: objectIdSchema.nullable().optional(),
-      }),
-    )
-    .min(1),
+  blockIds: z.array(objectIdSchema).min(1),
 });
 
 function handleZodError(err: unknown, res: Response): boolean {
@@ -380,11 +371,16 @@ router.delete('/blocks/:id', async (req: Request, res: Response) => {
  * and aren't assumed available), the inputs are fully validated up-front
  * to minimize the chance of a partial-write outcome.
  */
-router.post('/blocks/reorder', async (req: Request, res: Response) => {
+router.post('/pages/:pageId/blocks/reorder', async (req: Request, res: Response) => {
   try {
+    const pageId = req.params.pageId;
+    if (typeof pageId !== 'string' || !/^[0-9a-fA-F]{24}$/.test(pageId)) {
+      res.status(400).json({ error: 'Invalid pageId' });
+      return;
+    }
     const body = reorderSchema.parse(req.body);
 
-    const page = await Page.findById(body.pageId).select('workspaceId').lean();
+    const page = await Page.findById(pageId).select('workspaceId').lean();
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -393,11 +389,11 @@ router.post('/blocks/reorder', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const itemIds = body.items.map((i) => new mongoose.Types.ObjectId(i.id));
+    const itemIds = body.blockIds.map((id) => new mongoose.Types.ObjectId(id));
     const existing = await Block.find({ _id: { $in: itemIds } })
       .select('_id pageId')
       .lean();
-    if (existing.length !== body.items.length) {
+    if (existing.length !== body.blockIds.length) {
       res.status(404).json({ error: 'One or more blocks not found' });
       return;
     }
@@ -408,43 +404,14 @@ router.post('/blocks/reorder', async (req: Request, res: Response) => {
       }
     }
 
-    // Validate any new parentBlockId references (must also be on this page).
-    const newParentIds = body.items
-      .map((i) => i.parentBlockId)
-      .filter((v): v is string => typeof v === 'string');
-    if (newParentIds.length > 0) {
-      const parents = await Block.find({
-        _id: { $in: newParentIds.map((id) => new mongoose.Types.ObjectId(id)) },
-      })
-        .select('_id pageId')
-        .lean();
-      if (parents.length !== new Set(newParentIds).size) {
-        res.status(404).json({ error: 'One or more parent blocks not found' });
-        return;
-      }
-      for (const p of parents) {
-        if (String(p.pageId) !== String(page._id)) {
-          res.status(400).json({ error: 'Parent blocks must belong to the same page' });
-          return;
-        }
-      }
-    }
-
-    // Atomic per-block update via bulkWrite (single network round-trip).
-    const ops = body.items.map((item) => {
-      const update: Record<string, unknown> = { order: item.order };
-      if (item.parentBlockId !== undefined) {
-        update.parentBlockId = item.parentBlockId
-          ? new mongoose.Types.ObjectId(item.parentBlockId)
-          : null;
-      }
-      return {
-        updateOne: {
-          filter: { _id: new mongoose.Types.ObjectId(item.id), pageId: page._id },
-          update: { $set: update },
-        },
-      };
-    });
+    // Order from frontend = index in blockIds array. Backend assigns
+    // sequential integer order values to maintain the requested sequence.
+    const ops = body.blockIds.map((id, index) => ({
+      updateOne: {
+        filter: { _id: new mongoose.Types.ObjectId(id), pageId: page._id },
+        update: { $set: { order: index } },
+      },
+    }));
 
     const result = await Block.bulkWrite(ops, { ordered: false });
 
