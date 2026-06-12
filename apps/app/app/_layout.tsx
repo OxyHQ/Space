@@ -4,6 +4,9 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo, useState } from 'react';
 import { OxyProvider, useOxy } from '@oxyhq/services';
+import { BloomThemeProvider, webLocalStorage, useBloomTheme } from '@oxyhq/bloom/theme';
+import type { BloomThemeStorage } from '@oxyhq/bloom/theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
 import { Platform, View } from 'react-native';
@@ -13,7 +16,6 @@ import { AppErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/sonner';
 import { KeyboardProvider } from '@/lib/keyboard';
 import { useColorScheme } from '@/lib/useColorScheme';
-import { useThemeStore } from '@/lib/stores/theme-store';
 import { getAppColorVars, applyAppColorToDocument } from '@/lib/app-color-presets';
 import { setTokenGetter } from '@/lib/api/client';
 import 'react-native-reanimated';
@@ -31,6 +33,14 @@ SplashScreen.preventAutoHideAsync();
 const OXY_API_URL = process.env.EXPO_PUBLIC_OXY_API_URL || 'https://api.oxy.so';
 const AUTH_REDIRECT_URI = Linking.createURL('/');
 
+const asyncStorageAdapter: BloomThemeStorage = {
+  getItem: (key) => AsyncStorage.getItem(key),
+  setItem: (key, value) => AsyncStorage.setItem(key, value),
+};
+
+const themeStorage: BloomThemeStorage | undefined =
+  Platform.OS === 'web' ? webLocalStorage : asyncStorageAdapter;
+
 function AuthSetup({ children }: { children: React.ReactNode }) {
   const { oxyServices } = useOxy();
 
@@ -42,17 +52,18 @@ function AuthSetup({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   const { colors, colorScheme } = useColorScheme();
-  const appColor = useThemeStore((s) => s.appColor);
+  const { colorPreset } = useBloomTheme();
 
-  // Web: apply app color CSS variables to document
+  // Web: apply extended app color CSS variables (card/chart/sidebar) on top
+  // of Bloom's base preset vars to the document.
   useEffect(() => {
-    applyAppColorToDocument(appColor, colorScheme);
-  }, [appColor, colorScheme]);
+    applyAppColorToDocument(colorPreset, colorScheme);
+  }, [colorPreset, colorScheme]);
 
-  // Native: cascade app color CSS variables via NativeWind vars()
+  // Native: cascade extended app color CSS variables via NativeWind vars()
   const colorVars = useMemo(() => {
-    return vars(getAppColorVars(appColor, colorScheme));
-  }, [appColor, colorScheme]);
+    return vars(getAppColorVars(colorPreset, colorScheme));
+  }, [colorPreset, colorScheme]);
 
   const stack = (
     <Stack
@@ -108,14 +119,22 @@ function RootLayout() {
 
   return (
     <AppErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <OxyProvider
-          baseURL={OXY_API_URL}
-          authRedirectUri={Platform.OS !== 'web' ? AUTH_REDIRECT_URI : undefined}
-        >
-          <AppContent />
-        </OxyProvider>
-      </QueryClientProvider>
+      <BloomThemeProvider
+        defaultMode="system"
+        defaultColorPreset="yellow"
+        persistKey="crm-theme"
+        storage={themeStorage}
+        fonts={false}
+      >
+        <QueryClientProvider client={queryClient}>
+          <OxyProvider
+            baseURL={OXY_API_URL}
+            authRedirectUri={Platform.OS !== 'web' ? AUTH_REDIRECT_URI : undefined}
+          >
+            <AppContent />
+          </OxyProvider>
+        </QueryClientProvider>
+      </BloomThemeProvider>
     </AppErrorBoundary>
   );
 }
