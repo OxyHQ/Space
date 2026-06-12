@@ -8,11 +8,6 @@
     "icon": "./assets/icon-512.png",
     "scheme": "oxyspace",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/icon-512.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#040711"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "so.oxy.space",
@@ -51,7 +46,15 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-asset",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon-512.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#040711"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
