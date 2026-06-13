@@ -1,8 +1,7 @@
 import { useColorScheme as useNativeWindColorScheme } from 'nativewind';
 import { useCallback, useMemo } from 'react';
-import { APP_COLOR_PRESETS, useBloomTheme } from '@oxyhq/bloom/theme';
+import { APP_COLOR_PRESETS, getPresetVars, useBloomTheme } from '@oxyhq/bloom/theme';
 import type { ThemeMode } from '@oxyhq/bloom/theme';
-import { getAppColorVars } from './app-color-presets';
 
 /** Convert an HSL CSS variable value like "153 50% 5%" to "hsl(153, 50%, 5%)".
  *  Also handles alpha syntax "0 0% 100% / 10%" → "hsla(0, 0%, 100%, 0.1)". */
@@ -32,7 +31,7 @@ export function useColorScheme() {
   );
 
   const colors = useMemo(() => {
-    const v = getAppColorVars(colorPreset, resolved);
+    const v = getPresetVars(colorPreset, resolved);
     return {
       background: hslVarToCSS(v['--background']),
       foreground: hslVarToCSS(v['--foreground']),
