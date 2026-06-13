@@ -88,7 +88,7 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
     [router],
   );
   const handleAccount = React.useCallback(
-    () => showBottomSheet?.("AccountSettings"),
+    () => showBottomSheet?.("ManageAccount"),
     [showBottomSheet],
   );
   const handleLogout = React.useCallback(() => {

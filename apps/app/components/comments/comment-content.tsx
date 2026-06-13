@@ -74,7 +74,7 @@ function MentionChip({ mention }: { mention: MentionSegment }) {
       // Best-effort — the Oxy account sheet covers the current user only,
       // but for non-self mentions we degrade to a no-op (Phase 3 will add
       // a user-profile sheet via Oxy services).
-      showBottomSheet?.("AccountSettings");
+      showBottomSheet?.("ManageAccount");
     }
   };
 
