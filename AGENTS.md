@@ -1,7 +1,5 @@
 # Oxy Space - Project Conventions
 
-(Mirrored from `CLAUDE.md` for AI coding assistants.)
-
 ## Product
 
 Oxy Space is a Notion-like workspace by Oxy: docs, databases, blocks, real-time collab, plus a native AI hub. It replaces the legacy "Clarity" AI chat product. The legacy chat runtime is in the process of being stripped from the user-facing surface.
