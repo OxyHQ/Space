@@ -1,18 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import ApiKeyUsage from '../models/api-key-usage';
 import { Subscription } from '../models/subscription';
-import mongoose from 'mongoose';
+import { checkLimit } from '../lib/sliding-window-limiter.js';
+import { log } from '../lib/logger.js';
 
-/** Rate limit configuration (previously from DeveloperApiKey model) */
 export interface IRateLimitConfig {
   requestsPerMinute: number | null;
   requestsPerDay: number | null;
   tokensPerMinute: number | null;
   tokensPerDay: number | null;
 }
-import { checkLimit } from '../lib/sliding-window-limiter.js';
-import { getRedisClient, withRedisTimeout as withTimeout } from '../lib/redis.js';
-import { log } from '../lib/logger.js';
 
 interface RateLimitStatus {
   limited: boolean;
@@ -20,6 +17,23 @@ interface RateLimitStatus {
   current?: number;
   limit?: number;
   resetInSeconds?: number;
+}
+
+type UsageAuthType = 'session' | 'internal';
+
+interface UsageRecord {
+  oxyUserId: string;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  tokensUsed: number;
+  creditsUsed: number;
+  responseTime?: number;
+  userAgent?: string;
+  ipAddress?: string;
+  timestamp: Date;
+  authType: UsageAuthType;
+  serviceApp?: string;
 }
 
 // Rate limits by subscription tier for session-based users
@@ -86,86 +100,8 @@ export async function getUserTier(userId: string): Promise<string> {
 }
 
 /**
- * Check if an API key has exceeded its rate limits using Redis sorted sets.
- * Falls back to allowing requests if Redis is unavailable.
- */
-async function checkApiKeyRateLimits(
-  apiKeyId: string,
-  rateLimit: IRateLimitConfig
-): Promise<RateLimitStatus> {
-  const redis = getRedisClient();
-  if (!redis) return { limited: false }; // Fail-open
-
-  const now = Date.now();
-  const windowMs = 60_000;
-  const windowStart = now - windowMs;
-
-  try {
-    // Check requests per minute
-    if (rateLimit.requestsPerMinute !== null) {
-      const key = `rl:apikey:${apiKeyId}:rpm`;
-      const pipeline = redis.pipeline();
-      pipeline.zremrangebyscore(key, 0, windowStart);
-      pipeline.zcard(key);
-      pipeline.zadd(key, now, `${now}:${Math.random().toString(36).slice(2, 8)}`);
-      pipeline.expire(key, 120);
-
-      const results = await withTimeout(pipeline.exec());
-      const currentCount = (results?.[1]?.[1] as number) || 0;
-
-      if (currentCount >= rateLimit.requestsPerMinute) {
-        await withTimeout(redis.zremrangebyscore(key, now, now));
-        const oldest = await withTimeout(redis.zrange(key, 0, 0, 'WITHSCORES'));
-        const oldestTs = oldest.length >= 2 ? parseInt(oldest[1]) : now;
-        const resetInSeconds = Math.max(Math.ceil((oldestTs + windowMs - now) / 1000), 1);
-        return {
-          limited: true,
-          limitType: 'requestsPerMinute',
-          current: currentCount,
-          limit: rateLimit.requestsPerMinute,
-          resetInSeconds,
-        };
-      }
-    }
-
-    // Check requests per day
-    if (rateLimit.requestsPerDay !== null) {
-      const dailyKey = `rl:apikey:${apiKeyId}:daily`;
-      const dailyCount = parseInt(await withTimeout(redis.get(dailyKey)) || '0');
-
-      if (dailyCount >= rateLimit.requestsPerDay) {
-        const now_ = new Date();
-        const midnight = new Date(now_.getFullYear(), now_.getMonth(), now_.getDate() + 1);
-        const resetInSeconds = Math.ceil((midnight.getTime() - now_.getTime()) / 1000);
-        return {
-          limited: true,
-          limitType: 'requestsPerDay',
-          current: dailyCount,
-          limit: rateLimit.requestsPerDay,
-          resetInSeconds: Math.max(resetInSeconds, 60),
-        };
-      }
-
-      // Increment daily counter with midnight expiry
-      const pipeline = redis.pipeline();
-      pipeline.incr(dailyKey);
-      const now_ = new Date();
-      const midnight = new Date(now_.getFullYear(), now_.getMonth(), now_.getDate() + 1);
-      const ttl = Math.ceil((midnight.getTime() - now_.getTime()) / 1000);
-      pipeline.expire(dailyKey, ttl);
-      await withTimeout(pipeline.exec());
-    }
-
-    return { limited: false };
-  } catch (err) {
-    log.rateLimit.error({ err }, 'Redis API key rate limit check failed, allowing request');
-    return { limited: false }; // Fail-open
-  }
-}
-
-/**
- * Rate limiting middleware for Developer API Keys
- * Must be used AFTER authenticateApiKey or authenticateTokenOrApiKey middleware
+ * Rate limiting middleware for authenticated sessions.
+ * Must be used after authenticateTokenOrApiKey middleware.
  */
 export async function apiKeyRateLimit(
   req: Request,
@@ -177,15 +113,8 @@ export async function apiKeyRateLimit(
     return next();
   }
 
-  // API key rate limiting — developer API key models removed during Clarity pruning.
-  // authenticateApiKey now rejects all API key requests, so this branch is unreachable,
-  // but we keep the passthrough for safety.
-  if (req.apiKey) {
-    return next();
-  }
-
   // Handle session-based user rate limiting (Redis-backed sliding window)
-  if (req.user?.id && !req.apiKey) {
+  if (req.user?.id) {
     try {
       const tier = await getUserTier(req.user.id);
       const result = await checkLimit(req.user.id, tier);
@@ -225,11 +154,12 @@ function sendRateLimitResponse(
     tokensPerMinute: 'tokens per minute',
     tokensPerDay: 'tokens per day',
   };
+  const limitLabel = status.limitType ? limitTypeMessages[status.limitType] : 'requests';
 
   res.status(429).json({
     error: {
       code: 'RATE_LIMIT_EXCEEDED',
-      message: `Rate limit exceeded: ${status.current}/${status.limit} ${limitTypeMessages[status.limitType!]}`,
+      message: `Rate limit exceeded: ${status.current}/${status.limit} ${limitLabel}`,
       retryable: true,
       retryAfter: status.resetInSeconds,
       suggestedAction: tier === 'free' ? 'upgrade' : 'wait',
@@ -241,47 +171,6 @@ function sendRateLimitResponse(
       },
     },
   });
-}
-
-/**
- * Get current usage stats for an API key
- */
-export async function getApiKeyUsageStats(apiKeyId: string): Promise<{
-  requestsLastMinute: number;
-  requestsLastDay: number;
-  tokensLastMinute: number;
-  tokensLastDay: number;
-}> {
-  const now = new Date();
-  const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const keyObjectId = new mongoose.Types.ObjectId(apiKeyId);
-
-  const [requestsLastMinute, requestsLastDay, tokensMinute, tokensDay] = await Promise.all([
-    ApiKeyUsage.countDocuments({
-      apiKeyId: keyObjectId,
-      timestamp: { $gte: oneMinuteAgo },
-    }),
-    ApiKeyUsage.countDocuments({
-      apiKeyId: keyObjectId,
-      timestamp: { $gte: oneDayAgo },
-    }),
-    ApiKeyUsage.aggregate([
-      { $match: { apiKeyId: keyObjectId, timestamp: { $gte: oneMinuteAgo } } },
-      { $group: { _id: null, total: { $sum: '$tokensUsed' } } },
-    ]),
-    ApiKeyUsage.aggregate([
-      { $match: { apiKeyId: keyObjectId, timestamp: { $gte: oneDayAgo } } },
-      { $group: { _id: null, total: { $sum: '$tokensUsed' } } },
-    ]),
-  ]);
-
-  return {
-    requestsLastMinute,
-    requestsLastDay,
-    tokensLastMinute: tokensMinute[0]?.total || 0,
-    tokensLastDay: tokensDay[0]?.total || 0,
-  };
 }
 
 /**
@@ -342,8 +231,14 @@ export async function recordUsage(
   creditsUsed?: number
 ): Promise<void> {
   try {
-    const usageRecord: any = {
-      oxyUserId: req.user?.id || req.userId,
+    const oxyUserId = req.user?.id || req.userId;
+    if (!oxyUserId) {
+      log.rateLimit.warn({ endpoint: req.path, method: req.method }, 'Skipping usage record without auth context');
+      return;
+    }
+
+    const usageRecord: UsageRecord = {
+      oxyUserId,
       endpoint: req.path,
       method: req.method,
       statusCode,
@@ -358,16 +253,9 @@ export async function recordUsage(
     if (req.serviceApp) {
       usageRecord.authType = 'internal';
       usageRecord.serviceApp = req.serviceApp.appName;
-    } else if (req.apiKey) {
-      usageRecord.apiKeyId = req.apiKey.id;
-      usageRecord.appId = req.apiKey.appId;
-      usageRecord.authType = 'api_key';
     } else {
       usageRecord.authType = 'session';
     }
-
-    // Mark that usage was explicitly recorded, so the auth middleware skips its own logging
-    (req as any)._usageRecorded = true;
 
     await ApiKeyUsage.create(usageRecord);
   } catch (error) {

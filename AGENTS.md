@@ -35,7 +35,7 @@ All Oxy ecosystem apps share the same MongoDB cluster on DigitalOcean. Each app 
 
 - **Frontend**: Expo 55, React Native 0.83, TypeScript, NativeWind (Tailwind), Reanimated v4, Zustand, TanStack Query
 - **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO, Redis (Valkey)
-- **Auth**: @oxyhq/services (OxyProvider, useAuth, OxySignInButton)
+- **Auth**: `@oxyhq/core ^3.4.13`, `@oxyhq/services ^10.2.10` (OxyProvider, useAuth, OxySignInButton)
 - **Routing**: expo-router (file-based)
 - **Infra**: SST + DigitalOcean (App Platform, Spaces) + Cloudflare
 
@@ -52,6 +52,13 @@ When designing or describing features, prefer this vocabulary:
 - **collab** — real-time multi-cursor editing, presence, comments.
 
 Do **not** use legacy chat-product vocabulary (conversation, message, thread, role/persona, agent, skill, deep research, follow-up) in user-facing copy for Oxy Space surfaces.
+
+## Oxy Auth / Session Contract
+
+- Frontend auth/session state belongs to `OxyProvider` with a registered `clientId`; SDK cold boot owns `/__oxy/sso-callback`, stored-session restore, FedCM/silent restore, and SSO bounce.
+- Do not add local SSO helpers, callback routes, token providers, auth interceptors, manual `Authorization` plumbing, refresh retries, or app-local session invalidation.
+- Backend APIs use `@oxyhq/core/server` (`createOxyAuthMiddleware`, `createOptionalOxyAuth`, `createOxyRateLimit`, `requireOxyAuth`, `getRequiredOxyUserId`, `authSocket`) and must not define local `AuthRequest`, `requireAuth`, `getUserId`, bearer parsers, or token-decoding middleware.
+- Bearer-authenticated writes do not fetch app-local CSRF tokens; CSRF remains for ambient cookie credentials and cookie-only writes.
 
 ## Oxy Service Connector Protocol (internal / Phase 5)
 

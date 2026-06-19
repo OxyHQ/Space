@@ -1,7 +1,12 @@
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { OxyServices } from '@oxyhq/core';
-import ApiKeyUsage from '../models/api-key-usage.js';
+import {
+  createOptionalOxyAuth,
+  createOxyAuthMiddleware,
+  type OxyRequestUser,
+  type OxyServiceAppContext,
+} from '@oxyhq/core/server';
 import { log } from '../lib/logger.js';
 import { getClientIp } from '../lib/net-utils.js';
 import type { WorkspaceDoc } from '../models/workspace.js';
@@ -19,17 +24,14 @@ declare global {
     interface Request {
       userId?: string;
       accessToken?: string;
-      user?: { id: string; username?: string; [key: string]: any };
+      user?: OxyRequestUser | null;
       apiKey?: {
         id: string;
         appId: string;
         userId: string;
         scopes: string[];
       };
-      serviceApp?: {
-        appId: string;
-        appName: string;
-      };
+      serviceApp?: OxyServiceAppContext;
       /**
        * Set by `requireWorkspaceMember` (Phase 2 workspaces). When present,
        * the request was made by a verified member of this workspace.
@@ -53,10 +55,10 @@ declare global {
 }
 
 /**
- * Oxy authentication middleware (official @oxyhq/core)
+ * Oxy authentication middleware (official @oxyhq/core/server)
  * Validates JWT tokens (including service tokens) and sets req.userId, req.user, req.accessToken
  */
-export const authenticateToken = oxyClient.auth({ debug: true });
+export const authenticateToken = createOxyAuthMiddleware(oxyClient, { auth: { debug: true } });
 
 /**
  * Service-only auth — rejects anything that isn't a service token.
@@ -68,40 +70,19 @@ export const oxyServiceAuth = oxyClient.serviceAuth({ debug: true });
  * Optional auth - attaches user if token present, doesn't block if absent
  * Tries bot auth first (Telegram), then Oxy JWT auth
  */
-const oxyOptionalAuth = oxyClient.auth({ optional: true, debug: true });
+const oxyOptionalAuth = createOptionalOxyAuth(oxyClient, { auth: { debug: true } });
 
 export function optionalAuth(
   req: Request,
   res: Response,
   next: NextFunction
 ): void {
-  // API keys should not go through JWT auth
-  const authHeader = req.headers['authorization'];
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-  if (token?.startsWith('clarity_sk_')) {
-    return next();
-  }
-
-  // Use oxyClient.auth({ optional: true }) — attaches user if valid, continues if not
+  // Uses @oxyhq/core/server optional auth — attaches user if valid, continues if not.
   oxyOptionalAuth(req, res, next);
 }
 
 /**
- * Developer API Key authentication.
- * Developer API key models were removed during Clarity pruning.
- * This stub rejects all API key requests.
- */
-export async function authenticateApiKey(
-  req: Request,
-  res: Response,
-  _next: NextFunction
-): Promise<void> {
-  res.status(401).json({ error: 'API key authentication is no longer supported' });
-}
-
-/**
- * Accepts both Oxy JWT tokens and API keys
- * Also supports Telegram bot authentication
+ * Accepts Oxy JWT tokens and the internal service secret.
  */
 export function authenticateTokenOrApiKey(
   req: Request,
@@ -127,15 +108,15 @@ export function authenticateTokenOrApiKey(
   const serviceSecret = process.env.SERVICE_SECRET;
   if (serviceSecret && token.length === serviceSecret.length &&
       crypto.timingSafeEqual(Buffer.from(token), Buffer.from(serviceSecret))) {
-    (req as any).user = { id: 'system' };
-    (req as any).serviceApp = { appName: 'internal' };
+    req.userId = 'system';
+    req.user = { id: 'system' };
+    req.serviceApp = {
+      appId: 'internal',
+      appName: 'internal',
+      credentialId: 'service-secret',
+      scopes: ['internal'],
+    };
     return next();
-  }
-
-  // API key auth
-  if (token.startsWith('clarity_sk_')) {
-    authenticateApiKey(req, res, next);
-    return;
   }
 
   // Oxy JWT auth
@@ -239,5 +220,3 @@ export async function authenticateTelegramBot(
     res.status(500).json({ error: 'Authentication failed' });
   }
 }
-
-
