@@ -1,5 +1,8 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 import { type PropsWithChildren } from 'react';
+import { getSsoCallbackBootstrapScript } from '@oxyhq/core';
+
+const SSO_CALLBACK_BOOTSTRAP_SCRIPT = getSsoCallbackBootstrapScript();
 
 /**
  * Root HTML component for static rendering
@@ -12,6 +15,10 @@ export default function Root({ children }: PropsWithChildren) {
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+
+        {/* Oxy SSO callback bootstrap — must run before the SPA hydrates so the
+            SDK can intercept and consume `/__oxy/sso-callback`. */}
+        <script dangerouslySetInnerHTML={{ __html: SSO_CALLBACK_BOOTSTRAP_SCRIPT }} />
 
         {/* Viewport and mobile optimization */}
         <meta

@@ -143,7 +143,7 @@ const DropdownMenuSubContent = React.forwardRef<
         className
       )}
       style={{
-        border: '1px solid hsl(var(--border) / 0.5)',
+        border: '1px solid color-mix(in srgb, var(--border) 50%, transparent)',
         ...style as any,
       }}
       {...props}
@@ -168,7 +168,7 @@ const DropdownMenuContent = React.forwardRef<
         className
       )}
       style={{
-        border: '1px solid hsl(var(--border) / 0.5)',
+        border: '1px solid color-mix(in srgb, var(--border) 50%, transparent)',
         ...style as any,
       }}
       {...props}
