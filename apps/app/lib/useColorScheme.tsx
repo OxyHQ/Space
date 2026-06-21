@@ -1,27 +1,27 @@
 import { useColorScheme as useNativeWindColorScheme } from 'nativewind';
 import { useCallback, useMemo } from 'react';
-import { APP_COLOR_PRESETS, getPresetVars, useBloomTheme } from '@oxyhq/bloom/theme';
-import type { ThemeMode } from '@oxyhq/bloom/theme';
+import { useBloomTheme, useTheme, type ThemeMode } from '@oxyhq/bloom/theme';
 
-/** Convert an HSL CSS variable value like "153 50% 5%" to "hsl(153, 50%, 5%)".
- *  Also handles alpha syntax "0 0% 100% / 10%" → "hsla(0, 0%, 100%, 0.1)". */
-function hslVarToCSS(value: string): string {
-  const parts = value.split('/').map((s) => s.trim());
-  if (parts.length === 2) {
-    const alpha = parseFloat(parts[1]) / 100;
-    return `hsla(${parts[0].replace(/ /g, ', ')}, ${alpha})`;
-  }
-  return `hsl(${value.replace(/ /g, ', ')})`;
-}
-
+/**
+ * App-wide color-scheme hook.
+ *
+ * Resolved colors come from Bloom's `useTheme()` (`ThemeColors`), whose values
+ * are already full `rgb(...)` strings — no manual HSL conversion. Light/dark
+ * resolution and the active preset come from Bloom + NativeWind; `mode` /
+ * `setColorScheme` proxy Bloom's `useBloomTheme()`.
+ */
 export function useColorScheme() {
   const { colorScheme: nwScheme } = useNativeWindColorScheme();
-  const { mode, colorPreset, setMode } = useBloomTheme();
+  const { mode, setMode } = useBloomTheme();
+  const theme = useTheme();
 
+  const effectiveMode: Exclude<ThemeMode, 'adaptive'> =
+    mode === 'adaptive' ? 'system' : mode;
+  // NativeWind's `colorScheme` is `ColorSchemeName` ('light' | 'dark' |
+  // 'unspecified' | null | undefined); collapse anything that is not an
+  // explicit 'dark' to 'light' for the system case.
   const resolved: 'light' | 'dark' =
-    mode === 'system' || mode === 'adaptive'
-      ? (nwScheme ?? 'light')
-      : mode;
+    effectiveMode === 'system' ? (nwScheme === 'dark' ? 'dark' : 'light') : effectiveMode;
 
   const setColorScheme = useCallback(
     (newMode: ThemeMode) => {
@@ -31,20 +31,24 @@ export function useColorScheme() {
   );
 
   const colors = useMemo(() => {
-    const v = getPresetVars(colorPreset, resolved);
+    const c = theme.colors;
     return {
-      background: hslVarToCSS(v['--background']),
-      foreground: hslVarToCSS(v['--foreground']),
-      card: hslVarToCSS(v['--card']),
-      sidebar: hslVarToCSS(v['--sidebar']),
-      surface: hslVarToCSS(v['--surface']),
-      muted: hslVarToCSS(v['--muted']),
-      mutedForeground: hslVarToCSS(v['--muted-foreground']),
-      border: hslVarToCSS(v['--border']),
-      primary: APP_COLOR_PRESETS[colorPreset].hex,
-      primaryForeground: hslVarToCSS(v['--primary-foreground']),
+      background: c.background,
+      // shadcn "foreground" is the primary text color.
+      foreground: c.text,
+      text: c.text,
+      card: c.card,
+      // Bloom 0.9.1 has no distinct surface token; surface ≈ card.
+      surface: c.card,
+      // Sidebar / muted are secondary surfaces.
+      sidebar: c.backgroundSecondary,
+      muted: c.backgroundSecondary,
+      mutedForeground: c.textSecondary,
+      border: c.border,
+      primary: c.primary,
+      primaryForeground: c.primaryForeground,
     };
-  }, [resolved, colorPreset]);
+  }, [theme]);
 
   return {
     colorScheme: resolved,

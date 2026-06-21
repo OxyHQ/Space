@@ -14,6 +14,7 @@ import { Toaster } from '@/components/sonner';
 import { KeyboardProvider } from '@/lib/keyboard';
 import { useColorScheme } from '@/lib/useColorScheme';
 import { setTokenGetter } from '@/lib/api/client';
+import { BLOOM_THEME_PERSIST_KEY, BLOOM_THEME_STORAGE } from '@/lib/themePersistence';
 import 'react-native-reanimated';
 import '../global.css';
 import '@/lib/i18n';
@@ -93,11 +94,14 @@ function RootLayout() {
       <BloomThemeProvider
         defaultMode="system"
         defaultColorPreset="yellow"
+        persistKey={BLOOM_THEME_PERSIST_KEY}
+        storage={BLOOM_THEME_STORAGE}
         fonts={false}
       >
         <QueryClientProvider client={queryClient}>
           <OxyProvider
             baseURL={OXY_API_URL}
+            clientId={process.env.EXPO_PUBLIC_OXY_CLIENT_ID}
             authRedirectUri={Platform.OS !== 'web' ? AUTH_REDIRECT_URI : undefined}
           >
             <AppContent />
