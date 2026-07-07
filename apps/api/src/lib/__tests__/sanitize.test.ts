@@ -9,13 +9,6 @@ vi.mock('../../internal/providers/lib/provider-names.js', () => ({
   ],
 }));
 
-vi.mock('../agent/secret-scanner.js', () => ({
-  redactSecrets: vi.fn((msg: string) => ({
-    redacted: msg.replace(/sk-[a-zA-Z0-9]{10,}/g, '[REDACTED]'),
-    secretsFound: [],
-  })),
-}));
-
 import { sanitizeMessage, getSafeErrorMessage, sanitizeFull } from '../errors/sanitize.js';
 
 describe('sanitizeMessage', () => {

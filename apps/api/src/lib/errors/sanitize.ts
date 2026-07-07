@@ -88,10 +88,9 @@ export function getOpenAIErrorType(code: string): string {
  * Use this for user-facing content that may contain either.
  */
 export function sanitizeFull(message: string): string {
-  // Basic secret redaction: mask anything that looks like a key/token
   let redacted = message;
-  // Redact API keys (sk-*, pk-*, Bearer tokens, etc.)
-  redacted = redacted.replace(/\b(sk|pk|api|key|token|secret|bearer)[-_]?[a-zA-Z0-9]{20,}\b/gi, '[REDACTED]');
+  // Redact common API key shapes (sk-*, pk-*, etc.) before provider-name scrubbing
+  redacted = redacted.replace(/\b(sk|pk)-[a-zA-Z0-9]{10,}\b/gi, '[REDACTED]');
   return sanitizeMessage(redacted);
 }
 
