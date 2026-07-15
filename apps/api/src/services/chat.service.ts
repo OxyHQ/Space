@@ -10,14 +10,14 @@
  */
 
 import { type ToolSet } from 'ai';
-import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } from '../lib/chat-core.js';
+import { resolveModel, getDefaultClarityModel } from '../lib/chat-core.js';
 import { markKeyCreditExhausted, getClarityModel, getModelMappingsForTier } from '../lib/gateway-client.js';
 import { getCurrentDateTool, webSearchTool, browseTool, webScraperTool, generateFileTool } from '../lib/tools/index.js';
 import { oxyClient } from '../middleware/auth.js';
 import type { User as OxyUser } from '@oxyhq/core';
 import { getOrCreateUserCredits } from '../lib/user-credits-helpers.js';
 import { processMessagesForPlatform } from '../lib/message-processor.js';
-import { reserveCredits, finalizeCredits, safeRefund, type CreditReservation, type CreditUsage } from '../lib/credits-manager.js';
+import { reserveCredits, type CreditReservation } from '../lib/credits-manager.js';
 import { estimateMessageTokens } from '../lib/token-counter.js';
 import { getUserTier } from '../middleware/api-key-rate-limit.js';
 import { runBeforeChatHooks } from '../lib/hooks/index.js';

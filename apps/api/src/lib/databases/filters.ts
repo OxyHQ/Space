@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type {
   Filter,
-  FilterCondition,
   FilterGroup,
 } from '../../models/database-view.js';
 import type {

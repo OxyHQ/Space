@@ -11,7 +11,6 @@
 import type { KeyConfig } from './types';
 import {
   CLARITY_MODELS,
-  TIER_MODEL_MAPPINGS,
   isClarityModel,
   getClarityModel,
   type ClarityModel,

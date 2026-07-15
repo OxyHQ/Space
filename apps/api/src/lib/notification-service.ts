@@ -10,7 +10,7 @@
  */
 
 import mongoose from 'mongoose';
-import Expo, { type ExpoPushMessage, type ExpoPushTicket, type ExpoPushReceiptId } from 'expo-server-sdk';
+import Expo, { type ExpoPushMessage, type ExpoPushReceiptId } from 'expo-server-sdk';
 import { Notification, type INotification, type NotificationType, type NotificationChannel, type NotificationPriority } from '../models/notification.js';
 import { PushToken } from '../models/push-token.js';
 import { WebPushSubscription } from '../models/web-push-subscription.js';
@@ -268,14 +268,6 @@ async function deliverWebPush(userId: string, notification: INotification): Prom
   );
 
   return results.some(r => r.status === 'fulfilled');
-}
-
-function formatNotificationText(notification: INotification): string {
-  const priorityEmoji = notification.priority === 'urgent' ? '\u26a0\ufe0f '
-    : notification.priority === 'high' ? '\u2757 '
-    : '';
-
-  return `${priorityEmoji}${notification.title}\n\n${notification.body}`;
 }
 
 // ── Main send function ─────────────────────────────────────────────

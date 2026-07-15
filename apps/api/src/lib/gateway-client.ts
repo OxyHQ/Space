@@ -5,30 +5,12 @@
  * local providers implementation so existing imports keep working.
  */
 
-import crypto from 'crypto';
 import { log } from './logger.js';
 import { getStatusCode } from './errors/index.js';
 
 // ============== MODE DETECTION ==============
 
 const GATEWAY_API_ENABLED = false;
-
-// ============== HTTP AUTH (only used when GATEWAY_API_ENABLED) ==============
-
-const SERVICE_NAME = 'clarity-api';
-
-function generateAuthHeaders(): Record<string, string> {
-  const timestamp = Date.now().toString();
-  const payload = JSON.stringify({ timestamp, service: SERVICE_NAME });
-  const signature = crypto.createHmac('sha256', SERVICE_SECRET!).update(payload).digest('hex');
-
-  return {
-    'X-Service-Name': SERVICE_NAME,
-    'X-Timestamp': timestamp,
-    'X-Signature': signature,
-    'Content-Type': 'application/json',
-  };
-}
 
 // Gateway HTTP helpers removed (gateway service deprecated)
 
@@ -176,7 +158,6 @@ interface CacheEntry<T> {
 
 const CACHE_TTL = 60_000; // 60 seconds
 let modelsCache: CacheEntry<ClarityModel[]> | null = null;
-let tierMappingsCache: CacheEntry<Record<string, ModelMapping[]>> | null = null;
 
 function isCacheValid<T>(entry: CacheEntry<T> | null): entry is CacheEntry<T> {
   return entry !== null && Date.now() < entry.expiresAt;

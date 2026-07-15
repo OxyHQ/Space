@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { log } from '../../lib/logger.js';
 import {
-  getAllClarityModels,
   getClarityModel,
-  getClarityModelsByCategory,
   getDefaultModelForCategory,
   getAvailableModels,
   type ModelCategory,

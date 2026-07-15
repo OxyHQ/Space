@@ -437,8 +437,6 @@ export function startHealthCheckMonitor(): void {
       const healths = await ProviderHealth.find({ circuitState: { $in: ['open', 'half-open'] } });
 
       for (const health of healths) {
-        const timeSinceLastCheck = Date.now() - health.lastHealthCheck.getTime();
-
         // Auto-transition open circuits to half-open after cooldown
         if (health.circuitState === 'open' && health.circuitOpenedAt) {
           const timeSinceOpen = Date.now() - health.circuitOpenedAt.getTime();

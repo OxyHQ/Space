@@ -74,14 +74,11 @@ export class SystemPromptBuilder {
       clarityModelId,
       clientContext,
       isDirectUserSession,
-      userId,
-      accessToken,
       oxyUser,
       userMemory,
       recalledMemories,
       skill,
       linkedAgent,
-      agentMode,
     } = opts;
 
     // 1. Base prompt

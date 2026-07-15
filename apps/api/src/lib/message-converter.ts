@@ -23,7 +23,6 @@ export interface ChatMessage {
  * Convert OpenAI-format messages to AI SDK ModelMessage format.
  * Handles tool result messages which have role "tool" in OpenAI format.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK ModelMessage types are complex/dynamic
 export function convertToAISDKMessages(messages: ChatMessage[], toolNameMapping: Map<string, string>): any[] {
   const result: any[] = [];
   const toolCallsMap = new Map<string, { name: string; index: number }>();

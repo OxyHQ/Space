@@ -146,7 +146,7 @@ export function runPostChatHooks(
   ctx: LifecycleContext,
   assistantResponse: string,
 ): void {
-  const { userId, messages, clarityModelId, tokenUsage, requestStartTime, skillId, isApiKey } = ctx;
+  const { userId, messages, clarityModelId, tokenUsage, requestStartTime, skillId } = ctx;
 
   runAfterChatHooks({
     userId,

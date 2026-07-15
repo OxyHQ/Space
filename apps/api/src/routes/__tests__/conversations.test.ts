@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Request } from 'express';
 
 // Mock dependencies before importing
 vi.mock('../../models/conversation.js', () => ({
@@ -36,25 +35,6 @@ import { Message } from '../../models/message.js';
 
 const mockConversation = Conversation as unknown as Record<string, ReturnType<typeof vi.fn>>;
 const mockMessage = Message as unknown as Record<string, ReturnType<typeof vi.fn>>;
-
-// Minimal Express-like req/res helpers
-function makeReq(overrides: Record<string, any> = {}): Partial<Request> {
-  return {
-    user: { id: 'user-1' },
-    userId: 'user-1',
-    body: {},
-    query: {},
-    params: {},
-    ...overrides,
-  };
-}
-
-function makeRes() {
-  const res: any = {};
-  res.status = vi.fn().mockReturnValue(res);
-  res.json = vi.fn().mockReturnValue(res);
-  return res;
-}
 
 // We test the route handlers directly by importing the router and extracting route handlers
 // Since express router handlers are buried, we'll test the core logic via supertest-like approach
@@ -220,7 +200,7 @@ describe('conversations route logic', () => {
       mockConversation.deleteOne.mockResolvedValue({ deletedCount: 1 });
       mockMessage.deleteMany.mockResolvedValue({ deletedCount: 3 });
 
-      const [convResult, msgResult] = await Promise.all([
+      const [convResult] = await Promise.all([
         Conversation.deleteOne({ oxyUserId: 'user-1', conversationId: 'conv-123' }),
         Message.deleteMany({ oxyUserId: 'user-1', conversationId: 'conv-123' }),
       ]);

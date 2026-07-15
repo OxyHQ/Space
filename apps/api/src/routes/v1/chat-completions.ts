@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { streamText, generateText, stepCountIs, type ToolSet } from 'ai';
+import { streamText, generateText, stepCountIs } from 'ai';
 import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } from '../../lib/chat-core.js';
 import { getClarityModel, getModelMappingsForTier } from '../../lib/gateway-client.js';
 import { getOrCreateUserCredits } from '../../lib/user-credits-helpers.js';
@@ -27,7 +27,7 @@ import { wrapToolsWithTruncation, getToolResultBudget } from '../../lib/tools/re
 import { log } from '../../lib/logger.js';
 import { recordEvent } from '../../lib/observability/index.js';
 import { classifyError, getRetryAfterHeader } from '../../lib/errors/index.js';
-import { setupSSEHeaders, writeTextChunk, writeStopChunk, writeContentChunk, filterThinking, makeChunk } from '../../lib/streaming-helpers.js';
+import { setupSSEHeaders, writeTextChunk, writeStopChunk, writeContentChunk, makeChunk } from '../../lib/streaming-helpers.js';
 import type { FailoverReason } from '../../lib/errors/error-codes.js';
 
 const router = Router();
@@ -295,7 +295,6 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       requestId,
       sseEmitter,
     });
-    const hasEditorTools = Array.isArray(body.tools) && body.tools.length > 0;
 
     const agentMessages: Array<{ role: 'assistant'; content: string; agentInfo: { id: string; name: string; avatar: string | null; handle: string } }> = [];
 
@@ -411,7 +410,6 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
     const model = getAIModel(resolved!.keyConfig);
 
     // Build common config for both streaming and non-streaming
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK config is dynamically extended; strict SDK param types don't support this pattern
     const baseConfig: any = {
       model,
       messages: convertedMessages,
@@ -505,7 +503,6 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       const assistantResponse = result.text || '';
 
       // Build tool invocations from generateText result
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK TypedToolCall shape varies per tool config
       const nonStreamToolInvocations = (result.toolCalls || []).map((tc: any) => {
         const toolResult = (result.toolResults || []).find((tr: any) => tr.toolCallId === tc.toolCallId);
         return {

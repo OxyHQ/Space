@@ -344,8 +344,6 @@ router.post('/checkout/subscription', authenticateToken, async (req: Request, re
     const userCredits = await getOrCreateUserCredits(userId);
     const customerId = await getOrCreateStripeCustomer(userId, userCredits);
 
-    const isAnnual = billingPeriod === 'annual';
-
     let stripePriceId: string;
     try {
       stripePriceId = await ensureStripePriceId(getStripe, plan.planId, billingPeriod);

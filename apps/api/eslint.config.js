@@ -34,8 +34,12 @@ export default [
     },
     rules: {
       "no-unused-vars": "off",
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", ignoreRestSiblings: true }],
       "no-undef": "off", // TypeScript handles this
+      // The base no-redeclare rule doesn't understand TypeScript function
+      // overload signatures; use the TS-aware version that does.
+      "no-redeclare": "off",
+      "@typescript-eslint/no-redeclare": "error",
     },
   },
 ];

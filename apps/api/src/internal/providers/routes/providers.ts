@@ -32,7 +32,7 @@ const router = express.Router();
  */
 router.post('/resolve', async (req: Request, res: Response) => {
   try {
-    const { clarityModelId, estimatedTokens = 0, skipProviders = [], keyPreference = {} } = req.body;
+    const { clarityModelId, estimatedTokens = 0, skipProviders = [] } = req.body;
 
     if (!clarityModelId) {
       return res.status(400).json({
@@ -90,7 +90,7 @@ router.post('/resolve', async (req: Request, res: Response) => {
 router.post('/:provider/proxy', async (req: Request, res: Response) => {
   try {
     const provider = req.params.provider as string;
-    const { modelId, messages, tools, config, keyPreference = {} } = req.body;
+    const { modelId, messages, tools, config } = req.body;
 
     // Validate inputs
     if (!modelId || !messages || !Array.isArray(messages)) {
@@ -164,7 +164,7 @@ router.post('/:provider/proxy', async (req: Request, res: Response) => {
           if (match) {
             totalTokens = parseInt(match[1], 10);
           }
-        } catch (e) {
+        } catch {
           // Ignore parsing errors
         }
       }

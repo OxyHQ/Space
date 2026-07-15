@@ -9,7 +9,6 @@ import {
 import { Workspace } from '../models/workspace.js';
 import {
   WorkspaceMember,
-  WORKSPACE_ROLES,
   type WorkspaceRole,
 } from '../models/workspace-member.js';
 import { Page } from '../models/page.js';

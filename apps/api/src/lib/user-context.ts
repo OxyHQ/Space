@@ -6,7 +6,6 @@
  */
 
 import { oxyClient } from '../middleware/auth.js';
-import { log } from './logger.js';
 
 export interface UserContext {
   userName: string | null;
