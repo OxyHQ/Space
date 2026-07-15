@@ -3,7 +3,7 @@ import { View, ActivityIndicator, Linking, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Head from 'expo-router/head';
 import { AuthContainer, AuthLogo } from '@/components/auth';
-import { useAuth, useOxy, showSignInModal } from '@oxyhq/services';
+import { useAuth, useOxy, openAccountDialog } from '@oxyhq/services';
 import apiClient from '@/lib/api/client';
 import config from '@/lib/config';
 import { Button } from '@/components/ui/button';
@@ -157,7 +157,7 @@ export default function AuthorizeScreen() {
     if (!isOxyAuth) {
       setStatus('needLogin');
       setMessage(t('authorize.needLogin', { app: appConfig.displayName }));
-      showSignInModal();
+      openAccountDialog();
       return;
     }
 
@@ -197,7 +197,7 @@ export default function AuthorizeScreen() {
       if (!isAuthenticated) {
         setStatus('needLogin');
         setMessage(t('authorize.needLogin', { app: appConfig.displayName }));
-        showSignInModal();
+        openAccountDialog();
         return;
       }
       setStatus('authorize');

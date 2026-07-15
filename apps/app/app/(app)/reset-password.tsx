@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { AuthContainer, AuthLogo, AuthInput, AuthButton, AuthError } from '@/components/auth';
-import { showSignInModal } from '@oxyhq/services';
+import { openAccountDialog } from '@oxyhq/services';
 import apiClient from '@/lib/api/client';
 import { toast } from '@/components/sonner';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -56,7 +56,7 @@ export default function ResetPasswordScreen() {
 
       toast.success(t('resetPassword.successMessage'));
       router.replace('/(app)');
-      showSignInModal();
+      openAccountDialog();
     } catch (error: any) {
       console.error('Reset password error:', error);
       const errorMessage = error.response?.data?.error || t('resetPassword.failedToReset');

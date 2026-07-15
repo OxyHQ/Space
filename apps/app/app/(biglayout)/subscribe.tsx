@@ -10,7 +10,7 @@ import {
   useCreateSubscriptionCheckout,
   type SubscriptionPlan,
 } from '@/lib/hooks/use-billing';
-import { useAuth, showSignInModal } from '@oxyhq/services';
+import { useAuth, openAccountDialog } from '@oxyhq/services';
 import { toast } from '@/components/sonner';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ArrowLeft, Check, Sparkles } from 'lucide-react-native';
@@ -33,7 +33,7 @@ export default function SubscribeScreen() {
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.replace('/(app)');
-      showSignInModal();
+      openAccountDialog();
     }
   }, [authLoading, isAuthenticated, router]);
 

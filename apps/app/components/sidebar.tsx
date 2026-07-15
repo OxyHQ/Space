@@ -21,7 +21,7 @@ import { useUIStore } from "@/lib/stores/ui-store";
 import { useRouter, usePathname } from "expo-router";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { UserAvatar } from "@/components/user-avatar";
-import { useOxy, showSignInModal } from "@oxyhq/services";
+import { useOxy, openAccountDialog } from "@oxyhq/services";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
 import { OxySpaceWordmark } from "@/components/ui/oxy-space-wordmark";
 import { WorkspaceSwitcher } from "@/components/workspace/workspace-switcher";
@@ -95,7 +95,7 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
     logout();
     router.replace("/(app)");
   }, [router, logout]);
-  const handleLogin = React.useCallback(() => showSignInModal(), []);
+  const handleLogin = React.useCallback(() => openAccountDialog(), []);
   const handleUpgrade = React.useCallback(
     () => router.push("/(biglayout)/subscribe"),
     [router],
