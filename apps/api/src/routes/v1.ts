@@ -54,10 +54,14 @@ router.get('/me', async (req: Request, res: Response) => {
 
     await userCredits.refreshCreditsIfNeeded();
 
+    const authUser = req.user;
+    const rawDisplayName = authUser?.displayName;
+    const displayName = typeof rawDisplayName === 'string' ? rawDisplayName : undefined;
+
     res.json({
       id: userId,
-      email: (req.user as any)?.email || '',
-      name: (req.user as any)?.displayName || (req.user as any)?.email || '',
+      email: authUser?.email || '',
+      name: displayName || authUser?.email || '',
       credits: {
         free: userCredits.credits.free,
         paid: userCredits.credits.paid,

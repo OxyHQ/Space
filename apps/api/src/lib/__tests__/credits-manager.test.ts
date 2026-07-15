@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies before importing credits-manager
+const mockUserCredits = vi.hoisted(() => ({
+  findById: vi.fn(),
+  findByIdAndUpdate: vi.fn(),
+  findOneAndUpdate: vi.fn(),
+}));
+
 vi.mock('../../models/user-credits.js', () => ({
-  UserCredits: {
-    findById: vi.fn(),
-    findByIdAndUpdate: vi.fn(),
-    findOneAndUpdate: vi.fn(),
-  },
+  UserCredits: mockUserCredits,
 }));
 
 vi.mock('../chat-core.js', () => ({
@@ -23,7 +25,6 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
-import { UserCredits } from '../../models/user-credits.js';
 import {
   reserveCredits,
   finalizeCredits,
@@ -36,8 +37,6 @@ import {
   CREDITS_CONFIG,
   type CreditReservation,
 } from '../credits-manager.js';
-
-const mockUserCredits = UserCredits as any;
 
 function makeCreditsDoc(free: number, paid: number) {
   return { credits: { free, paid }, _id: 'user-1' };

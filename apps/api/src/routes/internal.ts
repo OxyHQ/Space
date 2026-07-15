@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { generateText, stepCountIs, type ToolSet } from 'ai';
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } from '../lib/chat-core.js';
 import {
   getCurrentDateTool,
@@ -151,24 +151,25 @@ router.post('/trigger', oxyServiceAuth, async (req, res) => {
     const systemPrompt = buildTriggerSystemPrompt(oxyUser, appName);
 
     // Use generateText (non-streaming) for server-to-server
+    const messages: ModelMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: eventDescription },
+    ];
     const result = await generateText({
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: eventDescription },
-      ],
+      messages,
       tools,
       temperature: 0.3,
       maxRetries: 0,
       stopWhen: stepCountIs(5),
-    } as any);
+    });
 
     const responseTime = Date.now() - startTime;
 
     // Extract token usage (AI SDK uses inputTokens/outputTokens)
     const tokenUsage = result.usage ? {
-      promptTokens: (result.usage as any).inputTokens || 0,
-      completionTokens: (result.usage as any).outputTokens || 0,
+      promptTokens: result.usage.inputTokens || 0,
+      completionTokens: result.usage.outputTokens || 0,
       totalTokens: result.usage.totalTokens || 0,
     } : null;
 

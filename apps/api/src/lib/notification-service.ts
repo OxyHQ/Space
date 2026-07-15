@@ -156,14 +156,16 @@ async function deliverPush(userId: string, notification: INotification): Promise
         } else {
           // ticket.status === 'error'
           const errorDetail = ticket as { status: 'error'; message: string; details?: { error: string } };
+          const messageTo = chunk[i].to;
+          const messageToken = Array.isArray(messageTo) ? messageTo[0] : messageTo;
           log.general.warn(
-            { userId, token: (chunk[i] as any).to, error: errorDetail.message, errorCode: errorDetail.details?.error },
+            { userId, token: messageToken, error: errorDetail.message, errorCode: errorDetail.details?.error },
             'Expo push ticket error',
           );
 
           // Deactivate tokens that are permanently invalid
           if (errorDetail.details?.error === 'DeviceNotRegistered') {
-            await PushToken.updateOne({ token: (chunk[i] as any).to }, { $set: { active: false } });
+            await PushToken.updateOne({ token: messageToken }, { $set: { active: false } });
           }
         }
       }

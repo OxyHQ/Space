@@ -7,14 +7,13 @@ export default function AuthorizeCodeaScreen() {
 
   useEffect(() => {
     // Redirect to unified authorize screen with app=codea
-    const urlParams = new URLSearchParams();
-    urlParams.set('app', 'codea');
-
+    const forwarded: Record<string, string> = { app: 'codea' };
     Object.entries(params).forEach(([key, value]) => {
-      if (value) urlParams.set(key, value as string);
+      if (!value) return;
+      forwarded[key] = Array.isArray(value) ? value.join(',') : value;
     });
 
-    router.replace(`/authorize?${urlParams.toString()}` as any);
+    router.replace({ pathname: '/authorize', params: forwarded });
   }, [params, router]);
 
   return null;

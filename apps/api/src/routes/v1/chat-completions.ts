@@ -198,8 +198,8 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       // User profile from Oxy (HTTP call - add 5s timeout to prevent hanging)
       isDirectUserSession
         ? Promise.race([
-            (oxyClient.getUserById(req.user!.id) as Promise<unknown>),
-            new Promise(resolve => setTimeout(() => resolve(null), 5000))
+            oxyClient.getUserById(req.user!.id),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), 5000))
           ]).catch(() => null)
         : Promise.resolve(null),
 
@@ -311,7 +311,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       isDirectUserSession,
       userId: req.user?.id,
       accessToken: req.accessToken,
-      oxyUser: oxyUser as any,
+      oxyUser,
       recalledMemories,
       agentMode,
     });

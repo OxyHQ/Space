@@ -85,7 +85,9 @@ export interface ProviderAPIOptions {
  *
  * @throws Error if all keys are exhausted or the error is non-retryable.
  */
-export async function callProviderAPI<T = any>(options: ProviderAPIOptions): Promise<T> {
+export function callProviderAPI(options: ProviderAPIOptions & { responseType: 'arrayBuffer' }): Promise<Buffer>;
+export function callProviderAPI<T = any>(options: ProviderAPIOptions): Promise<T>;
+export async function callProviderAPI<T = any>(options: ProviderAPIOptions): Promise<T | Buffer> {
   const { provider, modelId, endpoint, body, formData, maxAttempts = 3, timeout, signal: externalSignal } = options;
 
   const baseUrl = PROVIDER_BASES[provider];
@@ -140,7 +142,7 @@ export async function callProviderAPI<T = any>(options: ProviderAPIOptions): Pro
             throw new Error(`DO async-invoke: no audio URL in output for ${modelId}`);
           }
           const buffer = await downloadBinaryFromUrl(audioUrl, combinedSignal);
-          return buffer as any as T;
+          return buffer;
         }
 
         return output as T;
@@ -201,7 +203,7 @@ export async function callProviderAPI<T = any>(options: ProviderAPIOptions): Pro
 
       if (options.responseType === 'arrayBuffer') {
         const buffer = Buffer.from(await response.arrayBuffer());
-        return buffer as any as T;
+        return buffer;
       }
 
       const data = await response.json() as T;

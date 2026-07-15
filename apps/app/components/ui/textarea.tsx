@@ -26,7 +26,7 @@ const Textarea = React.forwardRef<TextInput, TextareaProps>(
         scrollEnabled={false}
         textAlignVertical="top"
         style={[
-          Platform.OS === 'web' ? ({ fieldSizing: 'content' } as any) : undefined,
+          Platform.OS === 'web' ? { fieldSizing: 'content' } : undefined,
           style,
         ]}
         {...props}

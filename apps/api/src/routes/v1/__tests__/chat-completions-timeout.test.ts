@@ -252,11 +252,13 @@ const VALID_RESERVATION = {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function getHandler(): (req: any, res: any, next: any) => Promise<void> {
-  const stack = (chatCompletionsRouter as any).stack;
-  for (const layer of stack) {
-    if (layer.route?.path === '/' && layer.route?.methods?.post) {
+  for (const layer of chatCompletionsRouter.stack) {
+    const route = layer.route;
+    // Express sets `route.methods` at runtime, but @types/express omits it from IRoute.
+    const methods = route && (route as { methods?: Record<string, boolean> }).methods;
+    if (route?.path === '/' && methods?.post) {
       // The last handle in the route stack is the actual handler
-      const handles = layer.route.stack.filter((s: any) => s.method === 'post');
+      const handles = route.stack.filter((s) => s.method === 'post');
       return handles[handles.length - 1].handle;
     }
   }
@@ -524,8 +526,8 @@ describe('504 timeout fixes - /v1/chat/completions', () => {
     });
 
     // streamText throws a retryable 429 error
-    const retryableError = new Error('Rate limit exceeded');
-    (retryableError as any).status = 429;
+    const retryableError: Error & { status?: number } = new Error('Rate limit exceeded');
+    retryableError.status = 429;
     mockStreamText.mockImplementation(() => {
       return {
         // eslint-disable-next-line require-yield -- simulates immediate provider failure

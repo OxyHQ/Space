@@ -11,9 +11,10 @@ import type { Response } from 'express';
  */
 export function writeSSE(res: Response, data: string): void {
   res.write(data);
-  // Force flush if available (compression middleware)
-  if (typeof (res as any).flush === 'function') {
-    (res as any).flush();
+  // Force flush if available (compression middleware augments res with flush)
+  const flushable = res as Response & { flush?: () => void };
+  if (typeof flushable.flush === 'function') {
+    flushable.flush();
   }
 }
 

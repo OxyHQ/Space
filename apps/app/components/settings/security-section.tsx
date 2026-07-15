@@ -107,7 +107,7 @@ export function SecuritySection() {
       const dp = memory.preferences.defaultAgentPermissions;
       if (dp) setPermissions(dp as unknown as AgentPermissions);
 
-      const sp = memory.preferences.securityPreferences as any;
+      const sp = memory.preferences.securityPreferences;
       if (sp) {
         if (typeof sp.requireApproval === "boolean") setRequireApproval(sp.requireApproval);
         if (typeof sp.approvalTimeout === "number") setApprovalTimeout(sp.approvalTimeout);
@@ -418,7 +418,7 @@ export function SecuritySection() {
           if (memory?.preferences) {
             const dp = memory.preferences.defaultAgentPermissions;
             if (dp) setPermissions(dp as unknown as AgentPermissions);
-            const sp = memory.preferences.securityPreferences as any;
+            const sp = memory.preferences.securityPreferences;
             if (sp) {
               if (typeof sp.requireApproval === "boolean") setRequireApproval(sp.requireApproval);
               if (typeof sp.approvalTimeout === "number") setApprovalTimeout(sp.approvalTimeout);
