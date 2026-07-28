@@ -11,7 +11,7 @@ import { RotateCcw, Trash2 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useWorkspaceStore } from "@/lib/stores/workspace-store";
 import { useWorkspace } from "@/lib/hooks/use-workspaces";

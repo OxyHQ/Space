@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { useCreateWorkspace, type Workspace } from "@/lib/hooks/use-workspaces";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 
 /**
  * Curated set of safe, cross-platform emoji glyphs for the icon picker.

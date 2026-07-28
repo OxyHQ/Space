@@ -11,7 +11,7 @@ import {
   type SubscriptionPlan,
 } from '@/lib/hooks/use-billing';
 import { useAuth, openAccountDialog } from '@oxyhq/services';
-import { toast } from '@/components/sonner';
+import { toast } from '@oxyhq/bloom/toast';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ArrowLeft, Check, Sparkles } from 'lucide-react-native';
 import { useColorScheme } from '@/lib/useColorScheme';

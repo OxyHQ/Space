@@ -6,7 +6,7 @@ import { UserPlus, Trash2, MoreHorizontal } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useWorkspaces } from "@/lib/hooks/use-workspaces";
 import { useWorkspaceStore } from "@/lib/stores/workspace-store";

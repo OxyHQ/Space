@@ -4,7 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { MoreHorizontal } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useOxy } from "@oxyhq/services";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { useColorScheme } from "@/lib/useColorScheme";

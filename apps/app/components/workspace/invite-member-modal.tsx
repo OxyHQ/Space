@@ -14,7 +14,7 @@ import { Text } from "@/components/ui/text";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
 import { ChevronDown } from "lucide-react-native";
 import axios from "axios";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useInviteMember } from "@/lib/hooks/use-workspace-members";
 import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/hooks/workspace-roles";

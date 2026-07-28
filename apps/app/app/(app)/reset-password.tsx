@@ -4,7 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { AuthContainer, AuthLogo, AuthInput, AuthButton, AuthError } from '@/components/auth';
 import { openAccountDialog } from '@oxyhq/services';
 import apiClient from '@/lib/api/client';
-import { toast } from '@/components/sonner';
+import { toast } from '@oxyhq/bloom/toast';
 import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ResetPasswordScreen() {

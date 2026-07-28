@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import * as DropdownMenu from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/sonner";
+import { toast } from "@oxyhq/bloom/toast";
 import { useColorScheme } from "@/lib/useColorScheme";
 import {
   useShareLinks,
