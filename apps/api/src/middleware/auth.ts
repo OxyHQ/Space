@@ -4,8 +4,10 @@ import { OxyServices } from '@oxyhq/core';
 import {
   createOptionalOxyAuth,
   createOxyAuthMiddleware,
+  OXY_SERVICE_ENVIRONMENTS,
   type OxyRequestUser,
   type OxyServiceAppContext,
+  type OxyServiceEnvironment,
 } from '@oxyhq/core/server';
 import { log } from '../lib/logger.js';
 import { getClientIp } from '../lib/net-utils.js';
@@ -17,6 +19,14 @@ const OXY_API_URL = process.env.OXY_API_URL || 'https://api.oxy.so';
 export const oxyClient = new OxyServices({
   baseURL: OXY_API_URL,
 });
+
+/**
+ * Deployment environment reported on the internal service-secret context.
+ * `OxyServiceEnvironment` admits only development/staging/production, so a
+ * NODE_ENV outside that set (notably 'test') resolves to development.
+ */
+const SERVICE_ENVIRONMENT: OxyServiceEnvironment =
+  OXY_SERVICE_ENVIRONMENTS.find((env) => env === process.env.NODE_ENV) ?? 'development';
 
 // Extend Express Request for API keys and service tokens
 declare global {
@@ -115,6 +125,7 @@ export function authenticateTokenOrApiKey(
       appName: 'internal',
       credentialId: 'service-secret',
       scopes: ['internal'],
+      environment: SERVICE_ENVIRONMENT,
     };
     return next();
   }
