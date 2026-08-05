@@ -1,70 +1,148 @@
-# Oxy Space
+<p align="center">
+  <b>Oxy Space</b> is a workspace for documents and databases by <a href="https://oxy.so">Oxy</a>.<br>
+  Pages made of blocks, typed databases with views, comments and sharing, on every platform.
+</p>
 
-Workspace for docs, databases, and AI. Part of the [Oxy](https://oxy.so) ecosystem.
+<p align="center">
+  <a href="https://space.oxy.so">space.oxy.so</a>
+</p>
 
-**Live:** [space.oxy.so](https://space.oxy.so)
+<p align="center">
+  <img alt="Expo SDK 56" src="https://img.shields.io/badge/Expo-SDK%2056-440151?style=flat-square&logo=expo&logoColor=white">
+  <img alt="React Native 0.85" src="https://img.shields.io/badge/React%20Native-0.85-440151?style=flat-square&logo=react&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-440151?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Bun" src="https://img.shields.io/badge/bun-1.3-440151?style=flat-square&logo=bun&logoColor=white">
+  <img alt="Express" src="https://img.shields.io/badge/Express-4-440151?style=flat-square&logo=express&logoColor=white">
+  <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-Mongoose-440151?style=flat-square&logo=mongodb&logoColor=white">
+</p>
 
-## Monorepo
+---
 
-```
-apps/
-  app/    # Expo cross-platform client (web + iOS + Android)
-  api/    # Express backend API
-```
+<table>
+<tr>
+<td valign="top" width="50%">
 
-## Stack
+### 📄 One document model
 
-- **Frontend**: Expo 55, React Native 0.83, TypeScript, NativeWind (Tailwind), Reanimated v4, Zustand, TanStack Query
-- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO, Redis (Valkey)
-- **Auth**: OxyHQ (`@oxyhq/services`)
-- **Infra**: SST + DigitalOcean (App Platform, Spaces) + Cloudflare
+A page is a tree of blocks. A database is a typed collection of pages with its own columns and views, so a row in a table and a document you can open are the same object seen two ways.
 
-## Development
+Workspaces hold members, settings and permissions. Comments, share links and a trash live on top of that model rather than beside it.
 
-Use `bun` (never npm or yarn). `bunx` instead of `npx`.
+</td>
+<td valign="top" width="50%">
+
+### 🔑 Identity comes from Oxy
+
+There is no Space account. Sign in is the device first Oxy session, handled end to end by [`@oxyhq/services`](https://www.npmjs.com/package/@oxyhq/services) on the client and [`@oxyhq/core`](https://www.npmjs.com/package/@oxyhq/core) on the server.
+
+On top of that, Space carries its own authorize screen: a registered developer app can ask a signed in person for access over a PKCE flow. See the [Oxy platform repo](https://github.com/OxyHQ/oxy).
+
+</td>
+</tr>
+</table>
+
+## Workspaces
+
+| Workspace | Path | What it is |
+|---|---|---|
+| `@oxyspace/app` | [`apps/app/`](apps/app/) | Expo client for web, iOS and Android: editor, database views, command palette, sharing |
+| `@oxyspace/api` | [`apps/api/`](apps/api/) | Express API: TypeScript, MongoDB via Mongoose, Socket.IO |
+
+The client is expo-router with NativeWind and Reanimated, rendering [`@oxyhq/bloom`](https://www.npmjs.com/package/@oxyhq/bloom) primitives, with Zustand for state, TanStack Query for data, and shared API schemas from [`@oxyhq/contracts`](https://www.npmjs.com/package/@oxyhq/contracts).
+
+## Quick start
 
 ```bash
 bun install
-bun run dev:app    # Start frontend (Expo)
-bun run dev:api    # Start backend (Express)
+cp apps/api/.env.example apps/api/.env
+bun run dev:api
+bun run dev:app
 ```
 
-## Infrastructure
+Bun 1.3.14. Use `bun` and `bunx`, never npm, yarn or npx.
 
-Infrastructure is defined as code in `sst.config.ts` using [SST](https://sst.dev) with DigitalOcean and Cloudflare providers.
+<details>
+<summary><b>All the commands</b></summary>
+
+<br>
 
 ```bash
-# Set credentials
-export DIGITALOCEAN_TOKEN=dop_v1_...
-export SPACES_ACCESS_KEY_ID=...
-export SPACES_SECRET_ACCESS_KEY=...
-export CLOUDFLARE_API_TOKEN=...
+bun run dev         # both workspaces at once
+bun run dev:app     # Expo client
+bun run dev:api     # API
+bun run build       # both workspaces
+bun run build:app   # Expo web export
+bun run build:api   # API bundle
+bun run lint        # both workspaces
 
-# Deploy to a stage
-bunx sst deploy --stage production
-
-# Local dev (starts multiplexer)
-bunx sst dev
+bun run --filter @oxyspace/api test   # Vitest
 ```
 
-### Resources managed by SST
+`bun run android`, `bun run ios` and `bun run web` target the client.
 
-| Resource | Provider | Notes |
-|----------|----------|-------|
-| API service | DO App Platform | Express backend |
-| Static frontend | DO App Platform | Expo web build |
-| File storage | DO Spaces | `bucket-oxyspace` in ams3 |
-| Domains | space.oxy.so | api.space.oxy.so |
+</details>
 
-### Shared resources (external)
+<details>
+<summary><b>What the API models</b></summary>
 
-MongoDB and Valkey (Redis) are shared across all Oxy apps and referenced by cluster name in the App Platform spec. They are **not** created or destroyed by SST.
+<br>
 
-### Stages
+| Model | What it holds |
+|---|---|
+| `Workspace` and `WorkspaceMember` | The container, its members and their roles |
+| `Page` | A document, which may be a sub page or a database row |
+| `Block` | The atomic unit of content inside a page |
+| `Database` and `DatabaseView` | A typed collection of pages, and how it is rendered |
+| `Comment` | Discussion anchored in a document |
+| `ShareLink` | Public or scoped access to a page |
+| `DeveloperApp` and `DeveloperApiKey` | Third party integrations and their credentials |
+| `Subscription`, `Transaction`, `UserCredits` | Billing |
 
-- `production` — live at space.oxy.so, retains resources on removal
-- Any other stage name — creates isolated environment, removes resources on cleanup
+Routes live under [`apps/api/src/routes/`](apps/api/src/routes/).
 
-## Phase Roadmap
+</details>
 
-Oxy Space is being built in phases. See `~/.claude/plans/this-was-other-app-fancy-meteor.md` for the full plan. The current pass strips legacy chat-product UI and rebrands the shell. Pages, databases, blocks, and collab land in later phases.
+<details>
+<summary><b>Vocabulary</b></summary>
+
+<br>
+
+Getting these words right in code and in copy is the difference between a coherent product and a pile of features.
+
+| Word | Meaning |
+|---|---|
+| page | A document, which may hold blocks, sub pages, or be a row in a database |
+| block | An atomic content unit: paragraph, heading, todo, code, embed |
+| database | A typed collection of pages with columns and views |
+| view | One rendering of a database: table, board, gallery, calendar |
+| workspace | The top level container, with members, settings and permissions |
+| member | A person with a role inside a workspace |
+| collab | Real time multi cursor editing, presence and comments |
+
+</details>
+
+<details>
+<summary><b>Deploy</b></summary>
+
+<br>
+
+| Workflow | Target |
+|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | Lint, API tests and API build on every push and pull request |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Web build to Cloudflare Pages |
+
+Infrastructure is declared as code in [`sst.config.ts`](sst.config.ts) with [SST](https://sst.dev). MongoDB and Valkey are shared across Oxy apps and referenced rather than created, so a stage teardown never removes them.
+
+</details>
+
+## Conventions
+
+TypeScript first, with no `as any`, no `@ts-ignore` and no non null assertions. Styling is NativeWind classes rather than inline styles. Backend auth is `@oxyhq/core/server` middleware and is never hand rolled.
+
+Longer form docs live in [`docs/`](docs/), and the full working agreement in [`AGENTS.md`](AGENTS.md). Setup details are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+<br>
+
+<div align="center">
+<sub>Part of the <a href="https://github.com/OxyHQ">Oxy</a> ecosystem</sub>
+</div>
