@@ -1,6 +1,7 @@
 {
   "name": "oxyspace-monorepo",
   "version": "1.0.0",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Oxy Space - workspace for docs, databases, and AI",
   "private": true,
   "workspaces": [
