@@ -30,7 +30,6 @@
     "oxyspace"
   ],
   "author": "",
-  "license": "ISC",
   "devDependencies": {
     "sst": "^4.7.0",
     "typescript": "^5.9.3"
