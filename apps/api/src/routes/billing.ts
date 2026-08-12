@@ -724,27 +724,47 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
      * exception-based port does to an infrastructure failure, retiring work
      * nobody performed.
      *
-     * The failure this trades into: a crash between the insert and the grant
-     * leaves a paying customer un-credited with the dedup row blocking a retry.
-     * That is a loud, recoverable, single-customer failure with a ledger row
-     * naming it; the one it replaces is a silent recurring overpayment.
+     * The obvious failure this trades into — a crash between the insert and the
+     * grant, leaving a paying customer un-credited with the dedup row blocking
+     * every retry — is why both statements run in ONE TRANSACTION. Either the
+     * ledger row and the credits both commit, or neither does and Stripe's next
+     * retry is clean. Without it the ordering merely moves the silent failure
+     * from over-crediting to under-crediting, which is worse: an overpayment is
+     * visible in the balance, while a missing grant behind a present ledger row
+     * looks exactly like a completed purchase.
+     *
+     * So the residual failure is a rolled-back transaction and a 500, which
+     * Stripe retries, which then succeeds. Nothing silent is left.
      */
-    const transaction = await createCreditPurchase(db, {
-      oxyUserId: metadata.userId,
-      stripeCustomerId: session.customer as string,
-      stripePaymentIntentId: session.payment_intent as string,
-      amount: session.amount_total || 0,
-      currency: session.currency || 'usd',
-      credits,
-      description: `Purchased ${credits.toLocaleString()} credits`,
+    const granted = await db.transaction(async (tx) => {
+      const transaction = await createCreditPurchase(tx, {
+        oxyUserId: metadata.userId,
+        stripeCustomerId: session.customer as string,
+        stripePaymentIntentId: session.payment_intent as string,
+        amount: session.amount_total || 0,
+        currency: session.currency || 'usd',
+        credits,
+        description: `Purchased ${credits.toLocaleString()} credits`,
+      });
+
+      if (!transaction) return false;
+
+      const balance = await addCredits(tx, metadata.userId, credits, 'paid');
+      if (!balance) {
+        // The row was created a statement ago, so this means it was deleted
+        // mid-request. Throwing rolls the ledger row back, which is the whole
+        // point of the transaction: a recorded payment with no credits behind
+        // it is the one outcome nothing downstream can detect.
+        throw new Error(`user_credits row for ${metadata.userId} vanished before the grant`);
+      }
+      return true;
     });
 
-    if (!transaction) {
+    if (!granted) {
       log.credits.warn({ paymentIntent: session.payment_intent }, 'Duplicate checkout event, skipping');
       return;
     }
 
-    await addCredits(db, metadata.userId, credits, 'paid');
     log.credits.info({ credits, userId: metadata.userId }, 'Added credits to user');
     return;
   }
@@ -825,24 +845,35 @@ async function handleSubscriptionUpdate(stripeSubscription: Stripe.Subscription)
     // The ledger row is the lock and goes FIRST, as the source had it here:
     // granting first would make a redelivered webhook pay out twice. A null
     // result means this period was already granted.
-    const transaction = await createSubscriptionPayment(db, {
-      oxyUserId: userCredits.id,
-      stripeCustomerId: customerId,
-      // NOT `price ?? 0`, deliberately. `PlanData.annualPrice` is typed `number`
-      // but the gateway returns JSON that can omit it, and `transactions.amount`
-      // is NOT NULL with no default — so an absent price raises 23502 and the
-      // webhook 500s, which is exactly what Mongo did (`amount` is
-      // `required: true` and `Transaction.create` runs validators). Defaulting
-      // to zero would instead record a $0 payment in the ledger and grant a
-      // month of credits against it, silently.
-      amount: price,
-      currency: plan.currency,
-      credits: plan.creditsPerMonth,
-      description: `${plan.name} subscription credits (${isAnnual ? 'annual' : 'monthly'})`,
-      dedup: dedupKey,
+    const grantedUserId = userCredits.id;
+    const granted = await db.transaction(async (tx) => {
+      const transaction = await createSubscriptionPayment(tx, {
+        oxyUserId: grantedUserId,
+        stripeCustomerId: customerId,
+        // NOT `price ?? 0`, deliberately. `PlanData.annualPrice` is typed
+        // `number` but the gateway returns JSON that can omit it, and
+        // `transactions.amount` is NOT NULL with no default — so an absent
+        // price raises 23502 and the webhook 500s, which is exactly what Mongo
+        // did (`amount` is `required: true` and `Transaction.create` runs
+        // validators). Defaulting to zero would instead record a $0 payment in
+        // the ledger and grant a month of credits against it, silently.
+        amount: price,
+        currency: plan.currency,
+        credits: plan.creditsPerMonth,
+        description: `${plan.name} subscription credits (${isAnnual ? 'annual' : 'monthly'})`,
+        dedup: dedupKey,
+      });
+
+      if (!transaction) return false;
+
+      const balance = await addCredits(tx, grantedUserId, plan.creditsPerMonth, 'paid');
+      if (!balance) {
+        throw new Error(`user_credits row for ${grantedUserId} vanished before the grant`);
+      }
+      return true;
     });
 
-    if (!transaction) {
+    if (!granted) {
       log.credits.warn({ dedupKey }, 'Duplicate subscription credit event, skipping');
       // Returns without invalidating the entitlements cache — the source's own
       // early return from the catch block, preserved. It matters for one

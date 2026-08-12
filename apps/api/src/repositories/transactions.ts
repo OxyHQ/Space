@@ -27,6 +27,7 @@
 
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { transactions } from '../db/schema/billing.js';
 
 export type TransactionRow = typeof transactions.$inferSelect;
@@ -42,7 +43,7 @@ export type TransactionRow = typeof transactions.$inferSelect;
  *   recorded — in which case the caller must NOT grant credits again.
  */
 export async function createCreditPurchase(
-  db: StationDatabase,
+  db: PgHandle,
   values: {
     oxyUserId: string;
     stripeCustomerId?: string | null;
@@ -87,7 +88,7 @@ export async function createCreditPurchase(
  * @returns the inserted row, or null when this period was already granted.
  */
 export async function createSubscriptionPayment(
-  db: StationDatabase,
+  db: PgHandle,
   values: {
     oxyUserId: string;
     stripeCustomerId?: string | null;

@@ -30,6 +30,7 @@
 
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { userCredits } from '../db/schema/billing.js';
 
 /**
@@ -182,7 +183,7 @@ export async function refreshCreditsIfNeeded(
  * Returns null when the user has no row, matching `findByIdAndUpdate`'s null.
  */
 export async function addCredits(
-  db: StationDatabase,
+  db: PgHandle,
   userId: string,
   amount: number,
   type: 'free' | 'paid' = 'paid',

@@ -96,6 +96,82 @@ describe('createCreditPurchase idempotency', () => {
   });
 });
 
+/**
+ * The ledger row and the credit grant commit together, or not at all.
+ *
+ * `handleCheckoutCompleted` (`routes/billing.ts`) inserts the ledger row FIRST,
+ * as the idempotency lock, and grants credits second. That order is what stops a
+ * redelivered `checkout.session.completed` — routine from Stripe — from paying
+ * out twice. On its own it would move the silent failure rather than remove it:
+ * a crash between the two statements leaves a ledger row that blocks every
+ * retry and a customer who paid and received nothing, which reads downstream as
+ * a completed purchase.
+ *
+ * Both statements therefore run in one transaction, and these are the two
+ * properties that composition has to have. They are asserted here rather than at
+ * the route because they are properties of the DATABASE, and a mocked handle
+ * cannot express either one.
+ */
+describe('the credit grant is atomic with its ledger row', () => {
+  it('rolls the ledger row back when the grant fails', async () => {
+    const userId = testScope('tx-atomic');
+    const paymentIntent = `pi_${userId}`;
+
+    await expect(
+      db.transaction(async (tx) => {
+        const row = await createCreditPurchase(tx, {
+          oxyUserId: userId,
+          stripePaymentIntentId: paymentIntent,
+          amount: 1000,
+          currency: 'usd',
+          credits: 100,
+        });
+        expect(row).not.toBeNull();
+        // Stands in for the grant failing — in the route, `addCredits` returning
+        // null because the user_credits row vanished.
+        throw new Error('grant failed');
+      }),
+    ).rejects.toThrow('grant failed');
+
+    // The whole point: Stripe's retry must find NO ledger row, so it can
+    // re-run the purchase rather than be told it was already processed.
+    expect(await rowsFor(userId)).toBe(0);
+
+    const retry = await createCreditPurchase(db, {
+      oxyUserId: userId,
+      stripePaymentIntentId: paymentIntent,
+      amount: 1000,
+      currency: 'usd',
+      credits: 100,
+    });
+    expect(retry).not.toBeNull();
+    expect(await rowsFor(userId)).toBe(1);
+  });
+
+  /**
+   * The positive control. Without it, a transaction that rolled back
+   * unconditionally — or a `rowsFor` that could not see committed rows — would
+   * pass the test above for the wrong reason.
+   */
+  it('commits the ledger row when the grant succeeds', async () => {
+    const userId = testScope('tx-atomic-ok');
+
+    const committed = await db.transaction(async (tx) => {
+      const row = await createCreditPurchase(tx, {
+        oxyUserId: userId,
+        stripePaymentIntentId: `pi_${userId}`,
+        amount: 1000,
+        currency: 'usd',
+        credits: 100,
+      });
+      return row !== null;
+    });
+
+    expect(committed).toBe(true);
+    expect(await rowsFor(userId)).toBe(1);
+  });
+});
+
 describe('createSubscriptionPayment idempotency', () => {
   it('answers a redelivered period with null, and stores one row', async () => {
     const userId = testScope('tx-sub');
