@@ -69,6 +69,14 @@ async function liveColumns(tableName: string): Promise<string[]> {
  * `id`, `created_at` and `updated_at` are included where the source carried
  * them (`timestamps: true`); `api_key_usage` deliberately has no timestamp
  * pair because its schema sets `timestamps: false`.
+ *
+ * `writers` is PROSE — the assertion compares `columns` against the live
+ * catalogue and never reads it. Every file:line in it names the PRE-PORT
+ * Mongoose writer, at `master` f7834e8 or earlier; the models and
+ * `lib/user-credits-helpers.ts` were deleted when these routes were rewired,
+ * and the line numbers in the surviving files have moved. Kept as the record of
+ * which writer each column was derived FROM, which is the question this census
+ * exists to answer and which nothing else records.
  */
 const EXPECTED: { table: PgTable; name: string; columns: string[]; writers: string }[] = [
   {

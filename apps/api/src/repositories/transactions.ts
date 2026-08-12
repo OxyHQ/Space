@@ -27,6 +27,7 @@
 
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { transactions } from '../db/schema/billing.js';
 
 export type TransactionRow = typeof transactions.$inferSelect;
@@ -42,7 +43,7 @@ export type TransactionRow = typeof transactions.$inferSelect;
  *   recorded — in which case the caller must NOT grant credits again.
  */
 export async function createCreditPurchase(
-  db: StationDatabase,
+  db: PgHandle,
   values: {
     oxyUserId: string;
     stripeCustomerId?: string | null;
@@ -87,7 +88,7 @@ export async function createCreditPurchase(
  * @returns the inserted row, or null when this period was already granted.
  */
 export async function createSubscriptionPayment(
-  db: StationDatabase,
+  db: PgHandle,
   values: {
     oxyUserId: string;
     stripeCustomerId?: string | null;
@@ -161,11 +162,18 @@ export async function countTransactionsByUser(
 
 /**
  * The admin listing — `internal/providers/routes/billing-admin.ts:30`, which
- * filters by an optional user and/or status.
+ * filters by an optional user, status and/or TYPE.
+ *
+ * `type` was missing from this signature when the repository was written, and
+ * its absence is the permissive kind of wrong: the route builds
+ * `{ status, type }` and TypeScript would have accepted the object against a
+ * narrower type only because excess-property checking does not apply to a
+ * variable, so the clause would simply never have been emitted and the admin
+ * would see every transaction type while the UI claimed one was selected.
  */
 export async function listTransactions(
   db: StationDatabase,
-  filter: { oxyUserId?: string; status?: string },
+  filter: TransactionFilter,
   options: { limit: number; offset: number },
 ): Promise<TransactionRow[]> {
   return db
@@ -180,7 +188,7 @@ export async function listTransactions(
 /** Companion count for {@link listTransactions} — `billing-admin.ts:31`. */
 export async function countTransactions(
   db: StationDatabase,
-  filter: { oxyUserId?: string; status?: string },
+  filter: TransactionFilter,
 ): Promise<number> {
   const rows = await db
     .select({ total: sql<string>`count(*)` })
@@ -206,6 +214,8 @@ export async function listRecentTransactionsByUser(
     .limit(limit);
 }
 
+export type TransactionFilter = { oxyUserId?: string; status?: string; type?: string };
+
 /**
  * An absent filter key means "no restriction", which is what the admin route's
  * `query` object expresses by simply not having the key. `undefined` must
@@ -213,9 +223,10 @@ export async function listRecentTransactionsByUser(
  * `where col = null` matches nothing and would turn "all transactions" into
  * "none", an empty admin table with no error.
  */
-function transactionFilter(filter: { oxyUserId?: string; status?: string }): SQL | undefined {
+function transactionFilter(filter: TransactionFilter): SQL | undefined {
   const clauses: SQL[] = [];
   if (filter.oxyUserId !== undefined) clauses.push(eq(transactions.oxyUserId, filter.oxyUserId));
   if (filter.status !== undefined) clauses.push(eq(transactions.status, filter.status));
+  if (filter.type !== undefined) clauses.push(eq(transactions.type, filter.type));
   return clauses.length > 0 ? and(...clauses) : undefined;
 }

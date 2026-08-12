@@ -51,7 +51,9 @@ describe('the billing expiry registry', () => {
    * entry grows forever with no symptom until the disk fills.
    *
    * So the registry is asserted by CONTENT, against the model it came from —
-   * `models/api-key-usage.ts:91` declares `expireAfterSeconds: 90 * 24 * 60 * 60`.
+   * `models/api-key-usage.ts:91` declared `expireAfterSeconds: 90 * 24 * 60 * 60`
+   * (the pre-port Mongoose source, deleted at rewiring; read it at `master`
+   * f7834e8 or earlier).
    */
   it('carries exactly the one TTL index this domain had, at 90 days', () => {
     expect(BILLING_EXPIRY_TARGETS).toHaveLength(1);

@@ -3,10 +3,33 @@
  *
  * Tracks real-time costs per request, aggregates by user/model,
  * and provides analytics for cost optimization.
+ *
+ * ## The ledger has no writer in this codebase
+ *
+ * `recordCost` below is the only insert path and NOTHING CALLS IT — verified by
+ * grepping the symbol across `src/`, which names only this file. The same is
+ * true of `getUserCostSummary`, `getUserDashboardData`, `getTopUsersByCost`,
+ * `getModelEfficiency` and `getCostOptimizationRecommendations`. The two live
+ * exports are `calculateCost` (a pure function over an in-code pricing table,
+ * used by `internal/providers/routes/providers.ts:203`) and `getGlobalCostStats`
+ * (`internal/providers/routes/usage.ts:125`), which today reads an empty table
+ * and returns zeroes.
+ *
+ * That was equally true of the Mongo original — the state is inherited, not
+ * introduced by this port. It is stated here because a reader who assumes these
+ * numbers mean something will misread an admin dashboard full of zeroes as a
+ * quiet week rather than as a ledger nobody writes.
  */
 
-import { connectDB } from './db.js';
-import mongoose from 'mongoose';
+import { getDb } from '../db/client.js';
+import {
+  listForUser,
+  listGlobal,
+  listRecentForUser,
+  modelEfficiency,
+  recordCost as insertCostEntry,
+  topUsersByCost,
+} from '../repositories/cost-entries.js';
 import { getModelPricing } from '../internal/providers/lib/model-capabilities-data.js';
 import { log } from './logger.js';
 
@@ -38,31 +61,6 @@ export interface UserCostSummary {
   cacheSavings: number;
   freeTierSavings: number;  // Savings from using free providers
 }
-
-// ============== MONGODB SCHEMA ==============
-
-const CostEntrySchema = new mongoose.Schema({
-  userId: { type: String, required: true, index: true },
-  sessionId: { type: String, index: true },
-  clarityModelId: { type: String, required: true, index: true },
-  actualProvider: { type: String, required: true },
-  actualModelId: { type: String, required: true },
-  inputTokens: { type: Number, required: true },
-  outputTokens: { type: Number, required: true },
-  totalTokens: { type: Number, required: true },
-  costUSD: { type: Number, required: true },
-  savedFromCache: { type: Boolean, default: false },
-  timestamp: { type: Date, default: Date.now, index: true }
-}, {
-  timestamps: true
-});
-
-// Compound indexes for efficient queries
-CostEntrySchema.index({ userId: 1, timestamp: -1 });
-CostEntrySchema.index({ clarityModelId: 1, timestamp: -1 });
-CostEntrySchema.index({ userId: 1, clarityModelId: 1 });
-
-const CostEntryModel = mongoose.model('CostEntry', CostEntrySchema);
 
 // ============== COST CALCULATION ==============
 
@@ -121,10 +119,9 @@ export async function recordCost(
     const totalTokens = inputTokens + outputTokens;
     const costUSD = calculateCost(actualProvider, actualModelId, inputTokens, outputTokens);
 
-    await connectDB();
-    await CostEntryModel.create({
+    await insertCostEntry(getDb(), {
       userId,
-      sessionId,
+      sessionId: sessionId ?? null,
       clarityModelId,
       actualProvider,
       actualModelId,
@@ -133,7 +130,7 @@ export async function recordCost(
       totalTokens,
       costUSD,
       savedFromCache,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
     log.credits.info({ costUSD, clarityModelId, totalTokens, savedFromCache }, 'Recorded cost');
@@ -153,16 +150,7 @@ export async function getUserCostSummary(
   endDate?: Date
 ): Promise<UserCostSummary> {
   try {
-    await connectDB();
-
-    const query: any = { userId };
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = startDate;
-      if (endDate) query.timestamp.$lte = endDate;
-    }
-
-    const entries = await CostEntryModel.find(query);
+    const entries = await listForUser(getDb(), userId, startDate, endDate);
 
     let totalSpent = 0;
     let totalTokens = 0;
@@ -180,7 +168,9 @@ export async function getUserCostSummary(
       costByModel[model] = (costByModel[model] || 0) + entry.costUSD;
       tokensByModel[model] = (tokensByModel[model] || 0) + entry.totalTokens;
 
-      // Track cache savings (cost that would have been incurred)
+      // Track cache savings (cost that would have been incurred). This is the
+      // one place the internal pair is read on a per-user path; it feeds a
+      // scalar and never reaches the response — see the note on `listForUser`.
       if (entry.savedFromCache) {
         const wouldHaveCost = calculateCost(
           entry.actualProvider,
@@ -253,16 +243,7 @@ export async function getGlobalCostStats(
   freeTierSavingsTotal: number;
 }> {
   try {
-    await connectDB();
-
-    const query: any = {};
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = startDate;
-      if (endDate) query.timestamp.$lte = endDate;
-    }
-
-    const entries = await CostEntryModel.find(query);
+    const entries = await listGlobal(getDb(), startDate, endDate);
     const uniqueUsers = new Set(entries.map(e => e.userId)).size;
 
     let totalRevenue = 0;
@@ -323,6 +304,10 @@ export async function getGlobalCostStats(
 
 /**
  * Get top users by cost (admin)
+ *
+ * The source sorted on `totalSpent` alone, so ties among equal spenders came
+ * back in whatever order the `$group` produced and two identical calls could
+ * disagree on the last row. The repository adds `userId` as a second sort key.
  */
 export async function getTopUsersByCost(
   limit: number = 10,
@@ -330,37 +315,7 @@ export async function getTopUsersByCost(
   endDate?: Date
 ): Promise<Array<{ userId: string; totalSpent: number; totalTokens: number; totalRequests: number }>> {
   try {
-    await connectDB();
-
-    const matchStage: any = {};
-    if (startDate || endDate) {
-      matchStage.timestamp = {};
-      if (startDate) matchStage.timestamp.$gte = startDate;
-      if (endDate) matchStage.timestamp.$lte = endDate;
-    }
-
-    const pipeline = [
-      ...(Object.keys(matchStage).length > 0 ? [{ $match: matchStage }] : []),
-      {
-        $group: {
-          _id: '$userId',
-          totalSpent: { $sum: '$costUSD' },
-          totalTokens: { $sum: '$totalTokens' },
-          totalRequests: { $sum: 1 }
-        }
-      },
-      { $sort: { totalSpent: -1 as const } },
-      { $limit: limit }
-    ];
-
-    const results = await CostEntryModel.aggregate(pipeline);
-
-    return results.map(r => ({
-      userId: r._id,
-      totalSpent: r.totalSpent,
-      totalTokens: r.totalTokens,
-      totalRequests: r.totalRequests
-    }));
+    return await topUsersByCost(getDb(), limit, startDate, endDate);
   } catch (error) {
     log.credits.error({ err: error }, 'Error getting top users');
     return [];
@@ -377,42 +332,7 @@ export async function getModelEfficiency(): Promise<Array<{
   totalCost: number;
 }>> {
   try {
-    await connectDB();
-
-    const pipeline = [
-      {
-        $group: {
-          _id: '$clarityModelId',
-          totalCost: { $sum: '$costUSD' },
-          totalTokens: { $sum: '$totalTokens' },
-          totalRequests: { $sum: 1 }
-        }
-      },
-      {
-        $project: {
-          clarityModelId: '$_id',
-          totalCost: 1,
-          totalRequests: 1,
-          avgCostPer1kTokens: {
-            $cond: [
-              { $gt: ['$totalTokens', 0] },
-              { $multiply: [{ $divide: ['$totalCost', '$totalTokens'] }, 1000] },
-              0
-            ]
-          }
-        }
-      },
-      { $sort: { avgCostPer1kTokens: 1 as const } }
-    ];
-
-    const results = await CostEntryModel.aggregate(pipeline);
-
-    return results.map(r => ({
-      clarityModelId: r.clarityModelId,
-      avgCostPer1kTokens: r.avgCostPer1kTokens,
-      totalRequests: r.totalRequests,
-      totalCost: r.totalCost
-    }));
+    return await modelEfficiency(getDb());
   } catch (error) {
     log.credits.error({ err: error }, 'Error getting model efficiency');
     return [];
@@ -458,25 +378,29 @@ export async function getCostOptimizationRecommendations(userId: string): Promis
 
 // ============== EXPORT FOR DASHBOARD ==============
 
+/**
+ * `recentActivity` is typed from the repository rather than as `CostEntry[]`,
+ * and the difference is load-bearing: these rows ARE serialised into the
+ * response, so they come back without `actualProvider` / `actualModelId`.
+ * Declaring them `CostEntry[]` would assert two fields the query does not select
+ * and invite a later reader to put them on the wire.
+ */
 export async function getUserDashboardData(userId: string): Promise<{
   summary: UserCostSummary;
   recommendations: string[];
-  recentActivity: CostEntry[];
+  recentActivity: Awaited<ReturnType<typeof listRecentForUser>>;
 }> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const [summary, recommendations, recentActivity] = await Promise.all([
     getUserCostSummary(userId, thirtyDaysAgo),
     getCostOptimizationRecommendations(userId),
-    CostEntryModel.find({ userId })
-      .sort({ timestamp: -1 })
-      .limit(10)
-      .lean()
+    listRecentForUser(getDb(), userId),
   ]);
 
   return {
     summary,
     recommendations,
-    recentActivity: recentActivity as CostEntry[]
+    recentActivity,
   };
 }

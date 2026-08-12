@@ -15,7 +15,8 @@ import { markKeyCreditExhausted, getClarityModel, getModelMappingsForTier } from
 import { getCurrentDateTool, webSearchTool, browseTool, webScraperTool, generateFileTool } from '../lib/tools/index.js';
 import { oxyClient } from '../middleware/auth.js';
 import type { User as OxyUser } from '@oxyhq/core';
-import { getOrCreateUserCredits } from '../lib/user-credits-helpers.js';
+import { getDb } from '../db/client.js';
+import { getOrCreateUserCredits, refreshCreditsIfNeeded } from '../repositories/userCredits.js';
 import { processMessagesForPlatform } from '../lib/message-processor.js';
 import { reserveCredits, type CreditReservation } from '../lib/credits-manager.js';
 import { estimateMessageTokens } from '../lib/token-counter.js';
@@ -117,14 +118,17 @@ export async function loadUserContext(userId: string): Promise<UserContext> {
   let creditReservation: CreditReservation | null = null;
 
   try {
-    const [userCredits, tier] = await Promise.all([
-      getOrCreateUserCredits(userId),
+    const [, tier] = await Promise.all([
+      getOrCreateUserCredits(getDb(), userId),
       getUserTier(userId),
     ]);
 
     userTier = tier;
 
-    await userCredits.refreshCreditsIfNeeded();
+    // The row itself was never read here — `getOrCreateUserCredits` is called
+    // for its side effect (the account must exist before the refresh and the
+    // reservation, neither of which creates one).
+    await refreshCreditsIfNeeded(getDb(), userId);
     creditReservation = await reserveCredits(userId);
   } catch (error) {
     log.chat.error({ err: error }, 'Error loading user data');

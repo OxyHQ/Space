@@ -1,4 +1,12 @@
-import { UserCredits } from '../models/user-credits.js';
+import { getDb } from '../db/client.js';
+import {
+  chargeAdditionalCredits,
+  findUserCreditsById,
+  refundCredits,
+  reserveCredits as reserveCreditsRow,
+  zeroCredits,
+  type UserCreditsRow,
+} from '../repositories/userCredits.js';
 import { getClarityModel } from './chat-core.js';
 import { log } from './logger.js';
 
@@ -6,6 +14,15 @@ import { log } from './logger.js';
  * Credits Manager
  * Centralized utility for managing AI credits based on token usage
  * Supports tier-based credit multipliers for different Clarity models
+ *
+ * ## Where the guards live now
+ *
+ * Every balance check that used to be a Mongo `$expr` in the FILTER of a
+ * `findOneAndUpdate` is now the `WHERE` clause of a Postgres `UPDATE`, inside
+ * `repositories/userCredits.ts`. Nothing in this file compares a balance in
+ * JavaScript and then writes: that shape is a read-modify-write race that
+ * double-spends under load and passes every single-threaded test. A repository
+ * function returning `null` IS the refusal — a driver failure still throws.
  */
 
 export interface CreditUsage {
@@ -83,51 +100,23 @@ export async function reserveCredits(
   amount: number = CREDITS_CONFIG.INITIAL_RESERVATION
 ): Promise<CreditReservation | null> {
   try {
-    // Try to deduct from free credits first, then paid
-    const reserveResult = await UserCredits.findOneAndUpdate(
-      {
-        _id: userId,
-        $expr: {
-          $gte: [{ $add: ['$credits.free', '$credits.paid'] }, amount]
-        }
-      },
-      [
-        {
-          $set: {
-            'credits.free': {
-              $cond: {
-                if: { $gte: ['$credits.free', amount] },
-                then: { $subtract: ['$credits.free', amount] },
-                else: 0
-              }
-            },
-            'credits.paid': {
-              $cond: {
-                if: { $gte: ['$credits.free', amount] },
-                then: '$credits.paid',
-                else: { $subtract: ['$credits.paid', { $subtract: [amount, '$credits.free'] }] }
-              }
-            },
-            'credits.lastUsed': new Date()
-          }
-        }
-      ],
-      { returnDocument: 'after', runValidators: false, updatePipeline: true }
-    );
+    // Free is spent first, then paid — the repository keeps that order, which is
+    // deliberately the OPPOSITE of `deductCredits`. Both were found that way.
+    const reserved = await reserveCreditsRow(getDb(), userId, amount);
 
-    if (!reserveResult) {
+    if (!reserved) {
       log.credits.info({ userId }, 'Insufficient credits for user');
       return null;
     }
 
     log.credits.info({ amount, userId }, 'Reserved credits for user');
-    log.credits.info({ free: reserveResult.credits.free, paid: reserveResult.credits.paid }, 'Remaining credits');
+    log.credits.info({ free: reserved.creditsFree, paid: reserved.creditsPaid }, 'Remaining credits');
 
     return {
       userId,
       creditsReserved: amount,
-      initialFreeCredits: reserveResult.credits.free,
-      initialPaidCredits: reserveResult.credits.paid,
+      initialFreeCredits: reserved.creditsFree,
+      initialPaidCredits: reserved.creditsPaid,
     };
   } catch (error) {
     log.credits.error({ err: error }, 'Error reserving credits');
@@ -144,10 +133,15 @@ async function _adjustReservation(
   actualCreditsNeeded: number,
   label: string,
 ): Promise<{ creditsCharged: number; creditsRemaining: number }> {
+  const db = getDb();
   const creditAdjustment = reservation.creditsReserved - actualCreditsNeeded;
   log.credits.info({ userId: reservation.userId, reserved: reservation.creditsReserved, actualNeeded: actualCreditsNeeded, creditAdjustment }, `Finalizing ${label}`);
 
-  let updatedCredits = await UserCredits.findById(reservation.userId);
+  // The source read the row first and threw when it was absent, before deciding
+  // whether any adjustment was due. Kept: a zero adjustment still has to report
+  // the remaining balance, and a missing row is a different failure from a
+  // refused write.
+  let updatedCredits: UserCreditsRow | null = await findUserCreditsById(db, reservation.userId);
 
   if (!updatedCredits) {
     throw new Error('User credits not found');
@@ -155,51 +149,18 @@ async function _adjustReservation(
 
   if (creditAdjustment !== 0) {
     if (creditAdjustment > 0) {
-      updatedCredits = await UserCredits.findByIdAndUpdate(
-        reservation.userId,
-        { $inc: { 'credits.free': creditAdjustment } },
-        { returnDocument: 'after', runValidators: false }
-      );
+      updatedCredits = await refundCredits(db, reservation.userId, creditAdjustment);
       log.credits.info({ refunded: creditAdjustment }, `Refunded ${label} credits`);
     } else {
       const additionalCredits = Math.abs(creditAdjustment);
 
-      updatedCredits = await UserCredits.findOneAndUpdate(
-        {
-          _id: reservation.userId,
-          $expr: {
-            $gte: [{ $add: ['$credits.free', '$credits.paid'] }, additionalCredits]
-          }
-        },
-        [
-          {
-            $set: {
-              'credits.free': {
-                $cond: {
-                  if: { $gte: ['$credits.free', additionalCredits] },
-                  then: { $subtract: ['$credits.free', additionalCredits] },
-                  else: 0
-                }
-              },
-              'credits.paid': {
-                $cond: {
-                  if: { $gte: ['$credits.free', additionalCredits] },
-                  then: '$credits.paid',
-                  else: { $subtract: ['$credits.paid', { $subtract: [additionalCredits, '$credits.free'] }] }
-                }
-              }
-            }
-          }
-        ],
-        { returnDocument: 'after', runValidators: false, updatePipeline: true }
-      );
+      updatedCredits = await chargeAdditionalCredits(db, reservation.userId, additionalCredits);
 
       if (!updatedCredits) {
-        updatedCredits = await UserCredits.findByIdAndUpdate(
-          reservation.userId,
-          { $set: { 'credits.free': 0, 'credits.paid': 0 } },
-          { returnDocument: 'after' }
-        );
+        // The overage cannot be covered. Both balances go to zero and the
+        // shortfall is written off — a real policy, not an error path. The
+        // request is NOT refused.
+        updatedCredits = await zeroCredits(db, reservation.userId);
         log.credits.warn(`Insufficient credits for additional ${label} charge, set to 0`);
       } else {
         log.credits.info({ additionalCredits }, `Charged additional ${label} credits`);
@@ -211,8 +172,8 @@ async function _adjustReservation(
     throw new Error('Failed to update credits');
   }
 
-  const totalRemaining = updatedCredits.credits.free + updatedCredits.credits.paid;
-  log.credits.info({ free: updatedCredits.credits.free, paid: updatedCredits.credits.paid, total: totalRemaining }, `Final ${label} credits`);
+  const totalRemaining = updatedCredits.creditsFree + updatedCredits.creditsPaid;
+  log.credits.info({ free: updatedCredits.creditsFree, paid: updatedCredits.creditsPaid, total: totalRemaining }, `Final ${label} credits`);
 
   return {
     creditsCharged: actualCreditsNeeded,
@@ -261,14 +222,15 @@ export async function safeRefund(
 
 /**
  * Refund all reserved credits (in case of error before streaming)
+ *
+ * The refund lands in `credits_free` even when the reservation was taken from
+ * `credits_paid` — what `$inc: { 'credits.free': ... }` did. Preserved verbatim
+ * because changing it moves real money between two buckets with different
+ * top-up rules.
  */
 export async function refundReservation(reservation: CreditReservation): Promise<void> {
   try {
-    await UserCredits.findByIdAndUpdate(
-      reservation.userId,
-      { $inc: { 'credits.free': reservation.creditsReserved } },
-      { runValidators: false }
-    );
+    await refundCredits(getDb(), reservation.userId, reservation.creditsReserved);
     log.credits.info({ refunded: reservation.creditsReserved, userId: reservation.userId }, 'Refunded credits to user');
   } catch (error) {
     log.credits.error({ err: error }, 'Error refunding credits');
@@ -280,15 +242,15 @@ export async function refundReservation(reservation: CreditReservation): Promise
  */
 export async function getUserCredits(userId: string): Promise<{ free: number; paid: number; total: number } | null> {
   try {
-    const userCredits = await UserCredits.findById(userId);
-    if (!userCredits) {
+    const row = await findUserCreditsById(getDb(), userId);
+    if (!row) {
       return null;
     }
 
     return {
-      free: userCredits.credits.free,
-      paid: userCredits.credits.paid,
-      total: userCredits.credits.free + userCredits.credits.paid,
+      free: row.creditsFree,
+      paid: row.creditsPaid,
+      total: row.creditsFree + row.creditsPaid,
     };
   } catch (error) {
     log.credits.error({ err: error }, 'Error getting user credits');

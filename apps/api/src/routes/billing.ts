@@ -1,20 +1,102 @@
 import { Router, Request, Response } from 'express';
 import Stripe from 'stripe';
 import { authenticateToken, oxyClient } from '../middleware/auth.js';
-import { UserCredits, type IUserCredits } from '../models/user-credits.js';
-import { Subscription } from '../models/subscription.js';
-import { Transaction } from '../models/transaction.js';
+import { getDb } from '../db/client.js';
+import {
+  findUserCreditsByStripeCustomerId,
+  getOrCreateUserCredits,
+  setStripeCustomerId,
+  type UserCreditsRow,
+} from '../repositories/userCredits.js';
+import { grantCreditPurchase, grantSubscriptionPeriod } from '../repositories/creditGrants.js';
+import {
+  findLiveSubscription,
+  setCancelAtPeriodEnd,
+  updateSubscriptionPlan,
+  updateSubscriptionStatus,
+  upsertSubscriptionFromStripe,
+  type SubscriptionRow,
+} from '../repositories/subscriptions.js';
+import {
+  countTransactionsByUser,
+  listTransactionsByUser,
+  type TransactionRow,
+} from '../repositories/transactions.js';
 import { getPlans, getCreditPackages, getFeatures, getPlanFeatures, getAllClarityModels, type PlanFeatureData } from '../lib/gateway-client.js';
 import { ensureStripePriceId } from '../lib/stripe-prices.js';
-import { getOrCreateUserCredits } from '../lib/user-credits-helpers.js';
 import { getUserEntitlements, invalidateEntitlementsCache } from '../lib/plan-access.js';
 import { z } from 'zod';
 import { log } from '../lib/logger.js';
-import { sanitizeMessage, isDuplicateKeyError } from '../lib/errors/index.js';
+import { sanitizeMessage } from '../lib/errors/index.js';
 
 const router = Router();
 const getSafeErrorMessage = (error: unknown, fallback: string): string =>
   sanitizeMessage(error instanceof Error ? error.message : fallback);
+
+/**
+ * The wire shape of a subscription. `id`, never `_id`, and the six flattened
+ * `plan*` columns are reassembled into the `plan` object clients already read.
+ *
+ * Every one of them is nullable, because the webhook upsert is a writer Mongoose
+ * validators never ran on — `price` in particular is
+ * `isAnnual ? plan.annualPrice : plan.monthlyPrice`, which is `undefined` for a
+ * gateway plan with no annual price. Mongo stored the field absent; NOT NULL
+ * would have thrown inside a Stripe webhook and left a paying customer with no
+ * subscription row at all.
+ */
+function serializeSubscription(row: SubscriptionRow) {
+  return {
+    id: row.id,
+    oxyUserId: row.oxyUserId,
+    stripeCustomerId: row.stripeCustomerId,
+    stripeSubscriptionId: row.stripeSubscriptionId,
+    stripePriceId: row.stripePriceId,
+    status: row.status,
+    currentPeriodStart: row.currentPeriodStart,
+    currentPeriodEnd: row.currentPeriodEnd,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+    planId: row.planId,
+    billingPeriod: row.billingPeriod,
+    plan: {
+      planId: row.planPlanId,
+      name: row.planName,
+      product: row.planProduct,
+      creditsPerMonth: row.planCreditsPerMonth,
+      price: row.planPrice,
+      currency: row.planCurrency,
+      billingPeriod: row.planBillingPeriod,
+    },
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * The wire shape of a transaction. `id`, never `_id`.
+ *
+ * `dedup` was `metadata.dedup` in Mongo and is a real column now; it is put back
+ * under `metadata` so a client reading the ledger sees what it always saw. The
+ * raw `metadata` jsonb is retained on the row for backfill fidelity and is NOT
+ * emitted — historical rows may hold anything, and no current writer sets a key
+ * other than `dedup`.
+ */
+function serializeTransaction(row: TransactionRow) {
+  return {
+    id: row.id,
+    oxyUserId: row.oxyUserId,
+    stripeCustomerId: row.stripeCustomerId,
+    stripePaymentIntentId: row.stripePaymentIntentId,
+    type: row.type,
+    amount: row.amount,
+    currency: row.currency,
+    credits: row.credits,
+    status: row.status,
+    description: row.description,
+    metadata: row.dedup === null ? null : { dedup: row.dedup },
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
 let stripeInstance: Stripe | null = null;
 
@@ -35,7 +117,7 @@ function getWebhookSecret(): string {
 }
 
 // Helper to get or create Stripe customer
-async function getOrCreateStripeCustomer(userId: string, userCredits: IUserCredits): Promise<string> {
+async function getOrCreateStripeCustomer(userId: string, userCredits: UserCreditsRow): Promise<string> {
   let customerId = userCredits.stripeCustomerId;
 
   if (customerId) {
@@ -61,8 +143,7 @@ async function getOrCreateStripeCustomer(userId: string, userCredits: IUserCredi
     metadata: { userId },
   });
 
-  userCredits.stripeCustomerId = customer.id;
-  await userCredits.save();
+  await setStripeCustomerId(getDb(), userId, customer.id);
   log.credits.info({ customerId: customer.id, userId }, 'Created Stripe customer');
 
   return customer.id;
@@ -103,7 +184,7 @@ router.post('/checkout/credits', authenticateToken, async (req: Request, res: Re
       return res.status(400).json({ error: 'Invalid package ID' });
     }
 
-    const userCredits = await getOrCreateUserCredits(userId);
+    const userCredits = await getOrCreateUserCredits(getDb(), userId);
     const customerId = await getOrCreateStripeCustomer(userId, userCredits);
 
     const lineItem = pkg.stripePriceId
@@ -166,7 +247,7 @@ router.post('/checkout/custom-credits', authenticateToken, async (req: Request, 
       return res.status(400).json({ error: 'Minimum purchase amount is $0.50' });
     }
 
-    const userCredits = await getOrCreateUserCredits(userId);
+    const userCredits = await getOrCreateUserCredits(getDb(), userId);
     const customerId = await getOrCreateStripeCustomer(userId, userCredits);
 
     const session = await getStripe().checkout.sessions.create({
@@ -234,7 +315,7 @@ router.get('/plans', async (req: Request, res: Response) => {
     }
 
     // Load all Clarity models from providers API
-    let modelMap: Record<string, { displayName: string; description?: string }> = {};
+    const modelMap: Record<string, { displayName: string; description?: string }> = {};
     try {
       const clarityModels = await getAllClarityModels();
       for (const m of clarityModels) {
@@ -329,11 +410,7 @@ router.post('/checkout/subscription', authenticateToken, async (req: Request, re
       return res.status(400).json({ error: 'Invalid plan ID' });
     }
 
-    const existingSubscription = await Subscription.findOne({
-      oxyUserId: userId,
-      'plan.product': plan.product,
-      status: { $in: ['active', 'trialing'] },
-    }).lean();
+    const existingSubscription = await findLiveSubscription(getDb(), userId, plan.product);
 
     if (existingSubscription) {
       return res.status(409).json({
@@ -341,7 +418,7 @@ router.post('/checkout/subscription', authenticateToken, async (req: Request, re
       });
     }
 
-    const userCredits = await getOrCreateUserCredits(userId);
+    const userCredits = await getOrCreateUserCredits(getDb(), userId);
     const customerId = await getOrCreateStripeCustomer(userId, userCredits);
 
     let stripePriceId: string;
@@ -379,15 +456,8 @@ router.post('/checkout/subscription', authenticateToken, async (req: Request, re
 router.get('/subscription', authenticateToken, async (req: Request, res: Response) => {
   try {
     const product = req.query.product as string | undefined;
-    const query: Record<string, unknown> = {
-      oxyUserId: req.user!.id,
-      status: { $in: ['active', 'trialing'] },
-    };
-    if (product) {
-      query['plan.product'] = product;
-    }
-    const subscription = await Subscription.findOne(query).lean();
-    res.json({ subscription });
+    const subscription = await findLiveSubscription(getDb(), req.user!.id, product);
+    res.json({ subscription: subscription ? serializeSubscription(subscription) : null });
   } catch (error: unknown) {
     log.credits.error({ err: error }, 'Error fetching subscription');
     res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to fetch subscription') });
@@ -396,10 +466,7 @@ router.get('/subscription', authenticateToken, async (req: Request, res: Respons
 
 router.post('/subscription/cancel', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const subscription = await Subscription.findOne({
-      oxyUserId: req.user!.id,
-      status: { $in: ['active', 'trialing'] },
-    });
+    const subscription = await findLiveSubscription(getDb(), req.user!.id);
 
     if (!subscription) {
       return res.status(404).json({ error: 'No active subscription found' });
@@ -409,10 +476,12 @@ router.post('/subscription/cancel', authenticateToken, async (req: Request, res:
       cancel_at_period_end: true,
     });
 
-    subscription.cancelAtPeriodEnd = true;
-    await subscription.save();
+    const updated = await setCancelAtPeriodEnd(getDb(), subscription.id, true);
+    if (!updated) {
+      return res.status(404).json({ error: 'No active subscription found' });
+    }
 
-    res.json({ message: 'Subscription will be canceled at end of billing period', subscription });
+    res.json({ message: 'Subscription will be canceled at end of billing period', subscription: serializeSubscription(updated) });
   } catch (error: unknown) {
     log.credits.error({ err: error }, 'Error canceling subscription');
     res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to cancel subscription') });
@@ -430,10 +499,7 @@ router.post('/subscription/change-plan', authenticateToken, async (req: Request,
     const userId = req.user!.id;
 
     // Find existing active subscription
-    const subscription = await Subscription.findOne({
-      oxyUserId: userId,
-      status: { $in: ['active', 'trialing'] },
-    });
+    const subscription = await findLiveSubscription(getDb(), userId);
 
     if (!subscription) {
       return res.status(404).json({ error: 'No active subscription found' });
@@ -495,28 +561,32 @@ router.post('/subscription/change-plan', authenticateToken, async (req: Request,
       },
     });
 
-    // Update local subscription document
+    // Update the local subscription row. ONE `UPDATE`, because the source's
+    // `save()` was one document write: splitting it would open a window where
+    // the row names the new plan at the old price.
     const price = isAnnual ? targetPlan.annualPrice : targetPlan.monthlyPrice;
-    subscription.planId = targetPlan.planId;
-    subscription.billingPeriod = billingPeriod;
-    subscription.cancelAtPeriodEnd = false;
-    subscription.stripePriceId = targetPriceId;
-    subscription.plan = {
+    const updated = await updateSubscriptionPlan(getDb(), subscription.id, {
       planId: targetPlan.planId,
-      name: targetPlan.name,
-      product: targetPlan.product,
-      creditsPerMonth: targetPlan.creditsPerMonth,
-      price,
-      currency: targetPlan.currency,
       billingPeriod,
-    };
-    await subscription.save();
+      cancelAtPeriodEnd: false,
+      stripePriceId: targetPriceId,
+      planPlanId: targetPlan.planId,
+      planName: targetPlan.name,
+      planProduct: targetPlan.product,
+      planCreditsPerMonth: targetPlan.creditsPerMonth,
+      planPrice: price,
+      planCurrency: targetPlan.currency,
+      planBillingPeriod: billingPeriod,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'No active subscription found' });
+    }
 
     invalidateEntitlementsCache(userId);
 
     const direction = isUpgrade ? 'upgrade' : 'downgrade';
     log.credits.info({ userId, from: currentPlan.planId, to: targetPlan.planId, direction, billingPeriod }, 'Plan changed');
-    res.json({ message: 'Plan changed successfully', subscription, direction });
+    res.json({ message: 'Plan changed successfully', subscription: serializeSubscription(updated), direction });
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });
@@ -529,13 +599,16 @@ router.post('/subscription/change-plan', authenticateToken, async (req: Request,
 router.get('/transactions', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { limit = 20, offset = 0 } = req.query;
-    const transactions = await Transaction.find({ oxyUserId: req.user!.id })
-      .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .skip(Number(offset))
-      .lean();
-    const total = await Transaction.countDocuments({ oxyUserId: req.user!.id });
-    res.json({ transactions, total });
+    const db = getDb();
+    const transactions = await listTransactionsByUser(db, req.user!.id, {
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    // `count(*)` is bigint, which postgres.js decodes as a STRING while drizzle
+    // types it `number`. The repository coerces at that boundary; without it
+    // `total` would concatenate rather than add anywhere a client does maths.
+    const total = await countTransactionsByUser(db, req.user!.id);
+    res.json({ transactions: transactions.map(serializeTransaction), total });
   } catch (error: unknown) {
     log.credits.error({ err: error }, 'Error fetching transactions');
     res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to fetch transactions') });
@@ -547,7 +620,7 @@ router.post('/portal', authenticateToken, async (req: Request, res: Response) =>
     const { returnUrl } = req.body;
     const userId = req.user!.id;
 
-    const userCredits = await getOrCreateUserCredits(userId);
+    const userCredits = await getOrCreateUserCredits(getDb(), userId);
     const customerId = await getOrCreateStripeCustomer(userId, userCredits);
 
     const session = await getStripe().billingPortal.sessions.create({
@@ -623,29 +696,60 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     const credits = parseInt(metadata.credits || '0');
     if (credits <= 0) return;
 
-    const userCredits = await getOrCreateUserCredits(metadata.userId);
-    await userCredits.addCredits(credits, 'paid');
-    log.credits.info({ credits, userId: metadata.userId }, 'Added credits to user');
+    const db = getDb();
+    await getOrCreateUserCredits(db, metadata.userId);
 
-    try {
-      await Transaction.create({
-        oxyUserId: metadata.userId,
-        stripeCustomerId: session.customer as string,
-        stripePaymentIntentId: session.payment_intent as string,
-        type: 'credit_purchase',
-        amount: session.amount_total || 0,
-        currency: session.currency || 'usd',
-        credits,
-        status: 'completed',
-        description: `Purchased ${credits.toLocaleString()} credits`,
-      });
-    } catch (err: unknown) {
-      if (isDuplicateKeyError(err)) {
-        log.credits.warn({ paymentIntent: session.payment_intent }, 'Duplicate checkout event, skipping');
-        return;
-      }
-      throw err;
+    /*
+     * DIVERGENCE, and the only one in this file that changes what a customer's
+     * balance does. The two statements have been SWAPPED.
+     *
+     * The source granted the credits FIRST and inserted the ledger row second,
+     * treating error 11000 as "already processed" (`routes/billing.ts:626-648`
+     * before this port). Stripe redelivers `checkout.session.completed` as a
+     * matter of routine, so on the second delivery that order added the credits
+     * AGAIN and only then discovered the duplicate — a double grant that the
+     * catch block made look guarded. The subscription path below already had the
+     * correct order.
+     *
+     * Keeping the source order was not an available option either: with
+     * `ON CONFLICT ... DO NOTHING RETURNING` there is no exception to catch, so
+     * granting first would double-pay and then silently discard the one signal
+     * that says so.
+     *
+     * The insert is the lock. An empty result IS the duplicate, so a dropped
+     * connection or a statement timeout still throws and still reaches the
+     * caller instead of being answered "already done" — which is what a naive
+     * exception-based port does to an infrastructure failure, retiring work
+     * nobody performed.
+     *
+     * The obvious failure this trades into — a crash between the insert and the
+     * grant, leaving a paying customer un-credited with the dedup row blocking
+     * every retry — is why both statements run in ONE TRANSACTION. Either the
+     * ledger row and the credits both commit, or neither does and Stripe's next
+     * retry is clean. Without it the ordering merely moves the silent failure
+     * from over-crediting to under-crediting, which is worse: an overpayment is
+     * visible in the balance, while a missing grant behind a present ledger row
+     * looks exactly like a completed purchase.
+     *
+     * So the residual failure is a rolled-back transaction and a 500, which
+     * Stripe retries, which then succeeds. Nothing silent is left.
+     */
+    const granted = await grantCreditPurchase(db, {
+      oxyUserId: metadata.userId,
+      stripeCustomerId: session.customer as string,
+      stripePaymentIntentId: session.payment_intent as string,
+      amount: session.amount_total || 0,
+      currency: session.currency || 'usd',
+      credits,
+      description: `Purchased ${credits.toLocaleString()} credits`,
+    });
+
+    if (!granted) {
+      log.credits.warn({ paymentIntent: session.payment_intent }, 'Duplicate checkout event, skipping');
+      return;
     }
+
+    log.credits.info({ credits, userId: metadata.userId }, 'Added credits to user');
     return;
   }
 
@@ -658,18 +762,18 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 }
 
 async function handleSubscriptionUpdate(stripeSubscription: Stripe.Subscription) {
+  const db = getDb();
   const customerId = stripeSubscription.customer as string;
   const metadata = stripeSubscription.metadata;
 
   // Find UserCredits by Stripe customer ID, fall back to userId from metadata
-  let userCredits = await UserCredits.findOne({ stripeCustomerId: customerId });
+  let userCredits = await findUserCreditsByStripeCustomerId(db, customerId);
   if (!userCredits) {
     if (metadata?.userId) {
       log.credits.warn({ customerId, userId: metadata.userId }, 'No UserCredits for stripeCustomerId, falling back to userId');
-      userCredits = await getOrCreateUserCredits(metadata.userId);
+      userCredits = await getOrCreateUserCredits(db, metadata.userId);
       if (!userCredits.stripeCustomerId) {
-        userCredits.stripeCustomerId = customerId;
-        await userCredits.save();
+        userCredits = (await setStripeCustomerId(db, metadata.userId, customerId)) ?? userCredits;
       }
     } else {
       throw new Error(`No UserCredits found for stripeCustomerId ${customerId} and no userId in metadata`);
@@ -692,59 +796,82 @@ async function handleSubscriptionUpdate(stripeSubscription: Stripe.Subscription)
   const periodStart = item?.current_period_start;
   const periodEnd = item?.current_period_end;
 
-  await Subscription.findOneAndUpdate(
-    { stripeSubscriptionId: stripeSubscription.id },
-    {
-      oxyUserId: userCredits._id,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: stripeSubscription.id,
-      stripePriceId: stripeSubscription.items.data[0].price.id,
-      status: stripeSubscription.status,
-      currentPeriodStart: periodStart ? new Date(periodStart * 1000) : new Date(),
-      currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
-      planId: plan.planId,
-      billingPeriod: isAnnual ? 'annual' : 'monthly',
-      plan: { planId: plan.planId, name: plan.name, product: plan.product, creditsPerMonth: plan.creditsPerMonth, price, currency: plan.currency, billingPeriod: isAnnual ? 'annual' : 'monthly' },
-    },
-    { upsert: true, returnDocument: 'after' }
-  );
+  // `userCredits.id` is the Oxy user id — this table's primary key IS the user
+  // id, exactly as Mongo's `_id` held it, which is what `userCredits._id` read
+  // back out at this call site and the two below.
+  await upsertSubscriptionFromStripe(db, {
+    oxyUserId: userCredits.id,
+    stripeCustomerId: customerId,
+    stripeSubscriptionId: stripeSubscription.id,
+    stripePriceId: stripeSubscription.items.data[0].price.id,
+    status: stripeSubscription.status,
+    currentPeriodStart: periodStart ? new Date(periodStart * 1000) : new Date(),
+    currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
+    planId: plan.planId,
+    billingPeriod: isAnnual ? 'annual' : 'monthly',
+    planPlanId: plan.planId,
+    planName: plan.name,
+    planProduct: plan.product,
+    planCreditsPerMonth: plan.creditsPerMonth,
+    // `undefined` for a gateway plan with no annual price. `?? null` is
+    // deliberate: in Mongo `$set: { price: undefined }` was a NO-OP and stored
+    // the field absent, while the same statement in Postgres would need an
+    // explicit NULL to mean the same thing.
+    planPrice: price ?? null,
+    planCurrency: plan.currency,
+    planBillingPeriod: isAnnual ? 'annual' : 'monthly',
+  });
 
   // Add subscription credits with dedup protection (no time window — dedup key prevents duplicates)
   if (stripeSubscription.status === 'active') {
     const dedupKey = `${stripeSubscription.id}_${periodStart || Date.now()}`;
-    try {
-      // Create transaction first as dedup lock, then add credits
-      await Transaction.create({
-        oxyUserId: userCredits._id,
-        stripeCustomerId: customerId,
-        type: 'subscription_payment',
-        amount: price,
-        currency: plan.currency,
-        credits: plan.creditsPerMonth,
-        status: 'completed',
-        description: `${plan.name} subscription credits (${isAnnual ? 'annual' : 'monthly'})`,
-        metadata: { dedup: dedupKey },
-      });
-      await userCredits.addCredits(plan.creditsPerMonth, 'paid');
-      log.credits.info({ credits: plan.creditsPerMonth, subscriptionId: stripeSubscription.id, periodStart }, 'Added subscription credits');
-    } catch (err: unknown) {
-      if (isDuplicateKeyError(err)) {
-        log.credits.warn({ dedupKey }, 'Duplicate subscription credit event, skipping');
-        return;
-      }
-      throw err;
+    // The ledger row is the lock and goes FIRST, as the source had it here:
+    // granting first would make a redelivered webhook pay out twice. A null
+    // result means this period was already granted.
+    const granted = await grantSubscriptionPeriod(db, {
+      oxyUserId: userCredits.id,
+      stripeCustomerId: customerId,
+      // NOT `price ?? 0`, deliberately. `PlanData.annualPrice` is typed
+      // `number` but the gateway returns JSON that can omit it, and
+      // `transactions.amount` is NOT NULL with no default — so an absent
+      // price raises 23502 and the webhook 500s, which is exactly what Mongo
+      // did (`amount` is `required: true` and `Transaction.create` runs
+      // validators). Defaulting to zero would instead record a $0 payment in
+      // the ledger and grant a month of credits against it, silently.
+      amount: price,
+      currency: plan.currency,
+      credits: plan.creditsPerMonth,
+      description: `${plan.name} subscription credits (${isAnnual ? 'annual' : 'monthly'})`,
+      dedup: dedupKey,
+    });
+
+    if (!granted) {
+      log.credits.warn({ dedupKey }, 'Duplicate subscription credit event, skipping');
+      // Returns without invalidating the entitlements cache — the source's own
+      // early return from the catch block, preserved. It matters for one
+      // reachable case: a plan change made in the Stripe portal fires
+      // `customer.subscription.updated` with an UNCHANGED `periodStart`, so the
+      // dedup key hits, the subscription row above has already been updated, and
+      // the cached entitlements stay stale for up to the 5-minute TTL. Flagged
+      // rather than fixed here, because widening it is a decision about
+      // entitlement freshness and not part of the port.
+      return;
     }
+
+    // The grant happens INSIDE the transaction above, beside the ledger row it
+    // is paired with. There is deliberately no second `addCredits` here: the
+    // dedup key makes a REDELIVERED webhook idempotent, but it cannot see two
+    // grants inside one delivery, so a stray call at this point doubles every
+    // renewal silently.
+    log.credits.info({ credits: plan.creditsPerMonth, subscriptionId: stripeSubscription.id, periodStart }, 'Added subscription credits');
   }
 
-  invalidateEntitlementsCache(userCredits._id);
+  invalidateEntitlementsCache(userCredits.id);
 }
 
 async function handleSubscriptionDeleted(stripeSubscription: Stripe.Subscription) {
-  const sub = await Subscription.findOneAndUpdate(
-    { stripeSubscriptionId: stripeSubscription.id },
-    { status: 'canceled' }
-  );
+  const sub = await updateSubscriptionStatus(getDb(), stripeSubscription.id, 'canceled');
   if (sub?.oxyUserId) invalidateEntitlementsCache(sub.oxyUserId);
 }
 
@@ -770,10 +897,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   if (!subscriptionId) return;
 
   log.credits.error({ subscriptionId, invoiceId: invoice.id }, 'Invoice payment failed');
-  await Subscription.findOneAndUpdate(
-    { stripeSubscriptionId: subscriptionId },
-    { status: 'past_due' }
-  );
+  await updateSubscriptionStatus(getDb(), subscriptionId, 'past_due');
 }
 
 export default router;

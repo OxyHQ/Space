@@ -4,7 +4,8 @@
  * Results are cached per-user with a short TTL.
  */
 
-import { Subscription } from '../models/subscription.js';
+import { getDb } from '../db/client.js';
+import { listLiveSubscriptions } from '../repositories/subscriptions.js';
 import { getPlans, getPlanFeatures } from './gateway-client.js';
 
 const FREE_MODEL_IDS = ['clarity-fast', 'clarity-v1', 'clarity-v1'];
@@ -22,14 +23,14 @@ export async function getUserEntitlements(userId: string): Promise<Entitlements>
   const cached = cache.get(userId);
   if (cached && cached.expires > Date.now()) return cached.data;
 
-  const subscriptions = await Subscription.find({
-    oxyUserId: userId,
-    status: { $in: ['active', 'trialing'] },
-  }).lean();
+  const subscriptions = await listLiveSubscriptions(getDb(), userId);
 
+  // `plan.planId` flattened to `planPlanId`, still nullable and still filtered:
+  // the webhook upsert writes subscriptions Mongoose validators never ran on, so
+  // a live subscription with no plan snapshot is a shape that exists today.
   const planIds = subscriptions
-    .map(s => s.plan?.planId)
-    .filter(Boolean) as string[];
+    .map(s => s.planPlanId)
+    .filter((id): id is string => Boolean(id));
   if (planIds.length === 0) planIds.push('free');
 
   // Fetch all plans and filter client-side (providers API returns all plans)

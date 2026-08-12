@@ -66,8 +66,16 @@ vi.mock('../../../lib/credits-manager.js', () => ({
   refundReservation: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../../../lib/user-credits-helpers.js', () => ({
-  getOrCreateUserCredits: (...args: any[]) => mockGetOrCreateUserCredits(...args),
+// `lib/user-credits-helpers.ts` is gone — it was a one-function wrapper around
+// the model. The route now calls the repository directly, so the mock has to
+// follow it there, and `db/client.js` is mocked too because `getDb()` throws
+// when `DATABASE_URL` is unset, which every unit run is.
+vi.mock('../../../repositories/userCredits.js', () => ({
+  getOrCreateUserCredits: (_db: unknown, ...args: any[]) => mockGetOrCreateUserCredits(...args),
+}));
+
+vi.mock('../../../db/client.js', () => ({
+  getDb: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../middleware/auth.js', () => ({

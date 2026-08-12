@@ -105,7 +105,7 @@ describe('the registry', () => {
    * `api_usages` is NOT a target, and this is the assertion that keeps it that
    * way. `internal/providers/models/api-usage.ts` declares no
    * `expireAfterSeconds`; the 90-day TTL that looks like it belongs to it is on
-   * `models/api-key-usage.ts`, a different model in the billing domain. Adding
+   * the billing domain's `api_key_usage`, which does have one. Adding
    * a retention on that resemblance would start deleting rows nobody agreed to
    * delete.
    *
