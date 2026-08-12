@@ -378,6 +378,60 @@ describe('indexes and foreign keys', () => {
     expect(byName.get('database_views_database_id_databases_id_fk')).toBe('c');
   });
 
+  /**
+   * Every foreign key's REFERENCING column must have an index leading with it.
+   *
+   * Postgres indexes the referenced side automatically and the referencing side
+   * never — so an `ON DELETE CASCADE`/`SET NULL` with no such index makes each
+   * parent delete a sequential scan of the child table to find the rows to act
+   * on. Measured on this server at 300k rows: 8.42ms per parent delete without
+   * one, 0.15ms with one, 55x; port-pages-blocks reproduced it independently at
+   * 37x on their tables. It never fails a functional test — the rows are
+   * correct either way — and it surfaces as a slow delete nobody attributes to
+   * an index.
+   *
+   * A LEADING prefix is sufficient; a standalone index buys nothing on top of
+   * one. Both of this schema's current foreign keys are covered that way, but
+   * by compound indexes chosen for QUERY reasons — so nothing except this
+   * assertion stops a later reordering from silently removing the coverage.
+   * (`databases_parent_page_idx` is the opposite case: no query reader, kept
+   * solely for the `pages` foreign key that is not declared yet.)
+   */
+  it('indexes the referencing column of every foreign key', async () => {
+    const foreignKeys = await client.unsafe<{ conname: string; tbl: string; col: string }[]>(
+      `select c.conname, c.conrelid::regclass::text as tbl, a.attname as col
+       from pg_constraint c
+       join unnest(c.conkey) k(attnum) on true
+       join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+       where c.contype = 'f'
+         and c.conrelid in ('databases'::regclass, 'database_views'::regclass)`,
+    );
+    const indexes = await client.unsafe<{ tbl: string; first_col: string }[]>(
+      `select i.indrelid::regclass::text as tbl, a.attname as first_col
+       from pg_index i
+       join pg_attribute a on a.attrelid = i.indrelid and a.attnum = i.indkey[0]
+       where i.indrelid in ('databases'::regclass, 'database_views'::regclass)`,
+    );
+
+    /**
+     * Exactly two today. This is deliberately an equality, not a floor: when
+     * `databases.parentPageId -> pages.id` lands it becomes three, and that
+     * failure is the point — it puts whoever adds the foreign key in front of
+     * this assertion at the moment they need it. The coverage itself will
+     * already pass, via `databases_parent_page_idx`.
+     */
+    expect(foreignKeys).toHaveLength(2);
+
+    const leadsWith = new Set(indexes.map((i) => `${i.tbl}.${i.first_col}`));
+    // Floor: a query that returned nothing would make the loop below vacuous.
+    expect(leadsWith.size).toBeGreaterThanOrEqual(4);
+
+    const uncovered = foreignKeys
+      .filter((fk) => !leadsWith.has(`${fk.tbl}.${fk.col}`))
+      .map((fk) => `${fk.conname} (${fk.tbl}.${fk.col})`);
+    expect(uncovered).toEqual([]);
+  });
+
   it('cascades a database delete to its views', async () => {
     const [database] = await db
       .insert(databases)
