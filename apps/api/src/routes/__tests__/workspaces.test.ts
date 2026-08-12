@@ -39,7 +39,7 @@ vi.mock('../../lib/logger.js', () => ({
   },
 }));
 
-import { compareRoles, hasRole, WORKSPACE_ROLES } from '../../models/workspace-member.js';
+import { compareRoles, hasRole, WORKSPACE_ROLES } from '../../db/schema/workspaces.js';
 
 describe('workspace role helpers', () => {
   it('orders roles viewer < commenter < editor < admin < owner', () => {
