@@ -1,17 +1,25 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import mongoose from 'mongoose';
+import { isLiveEntityId } from '@oxyhq/db';
 import { z } from 'zod';
+import { getDb } from '../db/client.js';
 import {
-  Block,
-  BLOCK_COLORS,
   BLOCK_TYPES,
-  type BlockColor,
   type BlockContent,
   type BlockType,
-  type IBlock,
-} from '../models/block.js';
-import { Page } from '../models/page.js';
+} from '../db/schema/pages.js';
+import type { BlockRow } from '../repositories/blocks.js';
+import {
+  createBlock,
+  deleteBlockTree,
+  findBlockById,
+  findBlocksByIds,
+  listBlocksForPage,
+  nextBlockOrder,
+  reorderBlocks,
+  updateBlock,
+} from '../repositories/blocks.js';
+import { findPageById } from '../repositories/pages.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireWorkspaceMember } from '../middleware/workspace.js';
 import { log } from '../lib/logger.js';
@@ -21,15 +29,51 @@ const router = Router();
 // All block routes require an authenticated Oxy user.
 router.use(authenticateToken);
 
-const objectIdSchema = z
-  .string()
-  .regex(/^[0-9a-fA-F]{24}$/u, 'Invalid id');
+/**
+ * An id this schema could have stored — uuid v7, or a 24-char ObjectId hex for
+ * a row a backfill copied over. See the identical helper in `routes/pages.ts`
+ * for why a 24-hex-only regex is not it, and why this is a 400 guard rather
+ * than a precondition on a lookup.
+ */
+const entityIdSchema = z.string().refine(isLiveEntityId, 'Invalid id');
 
-const blockTypeSchema = z.enum(BLOCK_TYPES as readonly [BlockType, ...BlockType[]]);
+/**
+ * The id a content payload carries when the UI has not chosen a target yet —
+ * `link_to_page` before a page is picked, `inline_database` between the block
+ * being created and its database existing.
+ *
+ * It survives the move off ObjectIds unchanged because it is a well-formed
+ * ObjectId hex that names no row, which is exactly what it has to be: a
+ * sentinel the id validator accepts and no lookup ever resolves. Changing its
+ * shape would be a wire-format change for the two block types that read it.
+ */
+const UNRESOLVED_TARGET_ID = '000000000000000000000000';
 
-const blockColorSchema = z.enum(
-  BLOCK_COLORS as readonly [BlockColor, ...BlockColor[]],
-);
+const blockTypeSchema = z.enum(BLOCK_TYPES);
+
+/**
+ * Notion-style named colours a block or a rich-text segment may carry.
+ *
+ * Declared here rather than in `db/schema/pages.ts`: `blocks.content` is jsonb
+ * the table validates nothing about, and this route is the only thing that has
+ * ever validated its shape. The `BlockColor` union that used to sit beside this
+ * array is gone — `z.enum` derives the type from the array, so the two cannot
+ * drift.
+ */
+const BLOCK_COLORS = [
+  'default',
+  'gray',
+  'brown',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'red',
+] as const;
+
+const blockColorSchema = z.enum(BLOCK_COLORS);
 
 /**
  * Rich-text segment — single run of text plus optional annotations.
@@ -187,19 +231,19 @@ const buttonContentSchema = z.object({
   action: buttonActionSchema.default('navigate'),
   /** Action-specific params kept loose — validated by callers when fired. */
   url: z.string().optional(),
-  pageId: objectIdSchema.optional(),
-  templateId: objectIdSchema.optional(),
+  pageId: entityIdSchema.optional(),
+  templateId: entityIdSchema.optional(),
   webhookUrl: z.string().optional(),
   ...styleFields,
 });
 
 const linkToPageContentSchema = z.object({
-  pageId: objectIdSchema.default('000000000000000000000000'),
+  pageId: entityIdSchema.default(UNRESOLVED_TARGET_ID),
   ...styleFields,
 });
 
 const syncBlockContentSchema = z.object({
-  sourceBlockId: objectIdSchema.optional(),
+  sourceBlockId: entityIdSchema.optional(),
   ...styleFields,
 });
 
@@ -220,13 +264,13 @@ const mermaidContentSchema = z.object({
 // --- Phase 4: database ---
 const inlineDatabaseContentSchema = z.object({
   /**
-   * The Database to render. ObjectId of `Database` document. Defaults to
-   * a placeholder so the type-changed-to-inline_database path doesn't
+   * The database to render — a `databases` row id. Defaults to
+   * `UNRESOLVED_TARGET_ID` so the type-changed-to-inline_database path doesn't
    * fail validation; UI immediately replaces it after creating the DB.
    */
-  databaseId: objectIdSchema.default('000000000000000000000000'),
+  databaseId: entityIdSchema.default(UNRESOLVED_TARGET_ID),
   /** Optional starting view; falls back to the database's default view. */
-  viewId: objectIdSchema.optional(),
+  viewId: entityIdSchema.optional(),
   ...styleFields,
 });
 
@@ -253,8 +297,13 @@ function syncTextFromSegments(value: BlockContent): BlockContent {
 /**
  * Normalize content by filling in type-specific defaults and validating shape.
  * Throws ZodError on validation failure (handled by the caller).
+ *
+ * Exported for `__tests__/blocks.phase3.test.ts`, which used to assert these
+ * shapes against a hand-written COPY of the schemas below — so it measured the
+ * copy, and went on passing when the copy and this file disagreed about what an
+ * id looks like. It is the unit under test, not a seam invented for the test.
  */
-function normalizeContent(type: BlockType, content: unknown): BlockContent {
+export function normalizeContent(type: BlockType, content: unknown): BlockContent {
   const incoming =
     content && typeof content === 'object' && !Array.isArray(content)
       ? (content as Record<string, unknown>)
@@ -326,7 +375,7 @@ const createBlockSchema = z.object({
   type: blockTypeSchema,
   content: z.unknown().optional(),
   order: z.number().finite().optional(),
-  parentBlockId: objectIdSchema.nullable().optional(),
+  parentBlockId: entityIdSchema.nullable().optional(),
 });
 
 const updateBlockSchema = z
@@ -334,14 +383,31 @@ const updateBlockSchema = z
     type: blockTypeSchema.optional(),
     content: z.unknown().optional(),
     order: z.number().finite().optional(),
-    parentBlockId: objectIdSchema.nullable().optional(),
+    parentBlockId: entityIdSchema.nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field is required',
   });
 
 const reorderSchema = z.object({
-  blockIds: z.array(objectIdSchema).min(1),
+  /**
+   * The page's new block sequence; each block takes its index as its `order`.
+   *
+   * Distinctness is enforced rather than left unspecified. The payload means
+   * "this is the sequence", and a sequence cannot hold the same block twice —
+   * but both storage engines answered a duplicate ARBITRARILY, so neither
+   * behaviour is one to port. Mongo issued two `updateOne`s under
+   * `ordered: false`; Postgres joins against `(values ...)` and, where two rows
+   * match one block, applies an unspecified one of them. A 400 replaces an
+   * unspecified outcome with a stated one, and rejects nothing the editor
+   * sends — a repeated id there would mean an already-corrupted block list.
+   */
+  blockIds: z
+    .array(entityIdSchema)
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'blockIds must not contain duplicates',
+    }),
 });
 
 function handleZodError(err: unknown, res: Response): boolean {
@@ -352,23 +418,17 @@ function handleZodError(err: unknown, res: Response): boolean {
   return false;
 }
 
-type SerializableBlock = Pick<
-  IBlock,
-  | '_id'
-  | 'pageId'
-  | 'parentBlockId'
-  | 'type'
-  | 'content'
-  | 'order'
-  | 'createdAt'
-  | 'updatedAt'
->;
-
-function serializeBlock(block: SerializableBlock) {
+/**
+ * The wire shape of a block. Unchanged by the port: this serializer has always
+ * emitted `id` and never `_id`, so unlike `serializePage` there is nothing to
+ * remove here. Every field already arrives from drizzle as the right type, so
+ * the `String(...)` coercions that undid `ObjectId` are gone.
+ */
+function serializeBlock(block: BlockRow) {
   return {
-    id: String(block._id),
-    pageId: String(block.pageId),
-    parentBlockId: block.parentBlockId ? String(block.parentBlockId) : null,
+    id: block.id,
+    pageId: block.pageId,
+    parentBlockId: block.parentBlockId,
     type: block.type,
     content: block.content,
     order: block.order,
@@ -385,9 +445,9 @@ function serializeBlock(block: SerializableBlock) {
 async function checkWorkspaceMembership(
   req: Request,
   res: Response,
-  workspaceId: mongoose.Types.ObjectId | string,
+  workspaceId: string,
 ): Promise<boolean> {
-  req.headers['x-workspace-id'] = String(workspaceId);
+  req.headers['x-workspace-id'] = workspaceId;
   const passed = await new Promise<boolean>((resolve) => {
     const next: NextFunction = (err?: unknown) => {
       if (err) {
@@ -412,9 +472,10 @@ async function checkWorkspaceMembership(
  */
 router.get('/pages/:pageId/blocks', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ pageId: objectIdSchema }).parse(req.params);
+    const params = z.object({ pageId: entityIdSchema }).parse(req.params);
 
-    const page = await Page.findById(params.pageId).select('workspaceId').lean();
+    const db = getDb();
+    const page = await findPageById(db, params.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -423,9 +484,7 @@ router.get('/pages/:pageId/blocks', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const blocks = await Block.find({ pageId: page._id })
-      .sort({ parentBlockId: 1, order: 1, createdAt: 1 })
-      .lean();
+    const blocks = await listBlocksForPage(db, page.id);
 
     res.json({ blocks: blocks.map((b) => serializeBlock(b)) });
   } catch (error: unknown) {
@@ -440,10 +499,11 @@ router.get('/pages/:pageId/blocks', async (req: Request, res: Response) => {
  */
 router.post('/pages/:pageId/blocks', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ pageId: objectIdSchema }).parse(req.params);
+    const params = z.object({ pageId: entityIdSchema }).parse(req.params);
     const body = createBlockSchema.parse(req.body);
 
-    const page = await Page.findById(params.pageId).select('workspaceId').lean();
+    const db = getDb();
+    const page = await findPageById(db, params.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -453,12 +513,12 @@ router.post('/pages/:pageId/blocks', async (req: Request, res: Response) => {
     if (!ok) return;
 
     if (body.parentBlockId) {
-      const parent = await Block.findById(body.parentBlockId).select('pageId').lean();
+      const parent = await findBlockById(db, body.parentBlockId);
       if (!parent) {
         res.status(404).json({ error: 'Parent block not found' });
         return;
       }
-      if (String(parent.pageId) !== String(page._id)) {
+      if (parent.pageId !== page.id) {
         res.status(400).json({ error: 'Parent block belongs to a different page' });
         return;
       }
@@ -466,27 +526,19 @@ router.post('/pages/:pageId/blocks', async (req: Request, res: Response) => {
 
     const content = normalizeContent(body.type, body.content);
 
-    // Default order = max(order) + 1 among siblings if not provided.
-    let order = body.order;
-    if (order === undefined) {
-      const siblingFilter: Record<string, unknown> = {
-        pageId: page._id,
-        parentBlockId: body.parentBlockId
-          ? new mongoose.Types.ObjectId(body.parentBlockId)
-          : null,
-      };
-      const last = await Block.findOne(siblingFilter)
-        .sort({ order: -1 })
-        .select('order')
-        .lean();
-      order = last ? last.order + 1 : 0;
-    }
+    // Default order = max(order) + 1 among siblings if not provided. Same race
+    // as `POST /api/pages` and the same reasoning: a transaction would take no
+    // lock here, so it would not close it.
+    const order =
+      body.order ??
+      (await nextBlockOrder(db, {
+        pageId: page.id,
+        parentBlockId: body.parentBlockId ?? null,
+      }));
 
-    const block = await Block.create({
-      pageId: page._id,
-      parentBlockId: body.parentBlockId
-        ? new mongoose.Types.ObjectId(body.parentBlockId)
-        : null,
+    const block = await createBlock(db, {
+      pageId: page.id,
+      parentBlockId: body.parentBlockId ?? null,
       type: body.type,
       content,
       order,
@@ -505,16 +557,17 @@ router.post('/pages/:pageId/blocks', async (req: Request, res: Response) => {
  */
 router.patch('/blocks/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = updateBlockSchema.parse(req.body);
 
-    const block = await Block.findById(params.id);
+    const db = getDb();
+    const block = await findBlockById(db, params.id);
     if (!block) {
       res.status(404).json({ error: 'Block not found' });
       return;
     }
 
-    const page = await Page.findById(block.pageId).select('workspaceId').lean();
+    const page = await findPageById(db, block.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -523,46 +576,45 @@ router.patch('/blocks/:id', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    if (body.parentBlockId !== undefined) {
-      if (body.parentBlockId === null) {
-        block.parentBlockId = null;
-      } else {
-        if (body.parentBlockId === String(block._id)) {
-          res.status(400).json({ error: 'A block cannot be its own parent' });
-          return;
-        }
-        const parent = await Block.findById(body.parentBlockId).select('pageId').lean();
-        if (!parent) {
-          res.status(404).json({ error: 'Parent block not found' });
-          return;
-        }
-        if (String(parent.pageId) !== String(block.pageId)) {
-          res.status(400).json({ error: 'Parent block belongs to a different page' });
-          return;
-        }
-        block.parentBlockId = new mongoose.Types.ObjectId(body.parentBlockId);
+    if (body.parentBlockId !== undefined && body.parentBlockId !== null) {
+      if (body.parentBlockId === block.id) {
+        res.status(400).json({ error: 'A block cannot be its own parent' });
+        return;
+      }
+      const parent = await findBlockById(db, body.parentBlockId);
+      if (!parent) {
+        res.status(404).json({ error: 'Parent block not found' });
+        return;
+      }
+      if (parent.pageId !== block.pageId) {
+        res.status(400).json({ error: 'Parent block belongs to a different page' });
+        return;
       }
     }
 
-    if (body.type !== undefined) {
-      block.type = body.type;
-    }
-
+    let content: BlockContent | undefined;
     if (body.content !== undefined || body.type !== undefined) {
       // Re-normalize content against the (possibly new) type. If only the
       // type changed, fall back to defaults so we never persist mismatched shapes.
+      // `block.type` is a `BlockType` rather than a bare `string` because the
+      // column carries `$type<BlockType>()`, matching its CHECK.
       const effectiveType = body.type ?? block.type;
       const incoming = body.content !== undefined ? body.content : block.content;
-      block.content = normalizeContent(effectiveType, incoming);
+      content = normalizeContent(effectiveType, incoming);
     }
 
-    if (body.order !== undefined) {
-      block.order = body.order;
+    const updated = await updateBlock(db, block.id, {
+      parentBlockId: body.parentBlockId,
+      type: body.type,
+      content,
+      order: body.order,
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'Block not found' });
+      return;
     }
 
-    await block.save();
-
-    res.json({ block: serializeBlock(block) });
+    res.json({ block: serializeBlock(updated) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to update block');
@@ -576,15 +628,16 @@ router.patch('/blocks/:id', async (req: Request, res: Response) => {
  */
 router.delete('/blocks/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
 
-    const block = await Block.findById(params.id);
+    const db = getDb();
+    const block = await findBlockById(db, params.id);
     if (!block) {
       res.status(404).json({ error: 'Block not found' });
       return;
     }
 
-    const page = await Page.findById(block.pageId).select('workspaceId').lean();
+    const page = await findPageById(db, block.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -593,11 +646,12 @@ router.delete('/blocks/:id', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const descendants = await collectDescendantBlockIds(block._id as mongoose.Types.ObjectId);
-    const allIds = [block._id as mongoose.Types.ObjectId, ...descendants];
-    await Block.deleteMany({ _id: { $in: allIds } });
+    // One recursive statement in place of the BFS. The descendants are named
+    // explicitly rather than left to `blocks.parentBlockId`'s CASCADE because
+    // this route answers with the COUNT and a cascade reports none.
+    const deleted = await deleteBlockTree(db, block.id);
 
-    res.json({ success: true, deleted: allIds.length });
+    res.json({ success: true, deleted });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to delete block');
@@ -606,26 +660,25 @@ router.delete('/blocks/:id', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/blocks/reorder
+ * POST /api/pages/:pageId/blocks/reorder
  * Bulk reorder. All items must already belong to `pageId` — we verify
- * before issuing writes. New parentBlockId values (when provided) must also
- * belong to the same page.
+ * before issuing writes.
  *
- * Writes go through a single `bulkWrite` so all updates ship in one
- * round-trip. Without MongoDB transactions (which require a replica set
- * and aren't assumed available), the inputs are fully validated up-front
- * to minimize the chance of a partial-write outcome.
+ * The up-front validation used to carry a second job: "without MongoDB
+ * transactions (which require a replica set and aren't assumed available), the
+ * inputs are fully validated up-front to minimize the chance of a partial-write
+ * outcome". That is no longer why it is here. `blocksRepository.reorderBlocks`
+ * counts and writes inside one transaction, so the partial write this could
+ * only make unlikely is now impossible; the validation survives to produce the
+ * 404 and 400, not to narrow a window.
  */
 router.post('/pages/:pageId/blocks/reorder', async (req: Request, res: Response) => {
   try {
-    const pageId = req.params.pageId;
-    if (typeof pageId !== 'string' || !/^[0-9a-fA-F]{24}$/.test(pageId)) {
-      res.status(400).json({ error: 'Invalid pageId' });
-      return;
-    }
+    const params = z.object({ pageId: entityIdSchema }).parse(req.params);
     const body = reorderSchema.parse(req.body);
 
-    const page = await Page.findById(pageId).select('workspaceId').lean();
+    const db = getDb();
+    const page = await findPageById(db, params.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -634,36 +687,32 @@ router.post('/pages/:pageId/blocks/reorder', async (req: Request, res: Response)
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const itemIds = body.blockIds.map((id) => new mongoose.Types.ObjectId(id));
-    const existing = await Block.find({ _id: { $in: itemIds } })
-      .select('_id pageId')
-      .lean();
+    const existing = await findBlocksByIds(db, body.blockIds);
     if (existing.length !== body.blockIds.length) {
       res.status(404).json({ error: 'One or more blocks not found' });
       return;
     }
     for (const b of existing) {
-      if (String(b.pageId) !== String(page._id)) {
+      if (b.pageId !== page.id) {
         res.status(400).json({ error: 'All blocks must belong to the same page' });
         return;
       }
     }
 
-    // Order from frontend = index in blockIds array. Backend assigns
-    // sequential integer order values to maintain the requested sequence.
-    const ops = body.blockIds.map((id, index) => ({
-      updateOne: {
-        filter: { _id: new mongoose.Types.ObjectId(id), pageId: page._id },
-        update: { $set: { order: index } },
-      },
-    }));
-
-    const result = await Block.bulkWrite(ops, { ordered: false });
+    // Order from frontend = index in blockIds array.
+    //
+    // `modified` is NARROWER than the number the Mongo route reported, and the
+    // difference is deliberate — Mongoose stamped `updatedAt` onto every
+    // operation of the `bulkWrite`, so its `modifiedCount` equalled
+    // `matchedCount` whether or not a block had actually moved. `matched` keeps
+    // Mongo's `matchedCount` meaning, which is what Postgres's row count is.
+    // Neither field is read: the only caller discards the response body.
+    const result = await reorderBlocks(db, page.id, body.blockIds);
 
     res.json({
       success: true,
-      matched: result.matchedCount,
-      modified: result.modifiedCount,
+      matched: result.matched,
+      modified: result.modified,
     });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
@@ -671,21 +720,5 @@ router.post('/pages/:pageId/blocks/reorder', async (req: Request, res: Response)
     res.status(500).json({ error: 'Failed to reorder blocks' });
   }
 });
-
-async function collectDescendantBlockIds(
-  rootId: mongoose.Types.ObjectId,
-): Promise<mongoose.Types.ObjectId[]> {
-  const collected: mongoose.Types.ObjectId[] = [];
-  let frontier: mongoose.Types.ObjectId[] = [rootId];
-  while (frontier.length > 0) {
-    const children = await Block.find({ parentBlockId: { $in: frontier } })
-      .select('_id')
-      .lean();
-    const childIds = children.map((c) => c._id as mongoose.Types.ObjectId);
-    collected.push(...childIds);
-    frontier = childIds;
-  }
-  return collected;
-}
 
 export default router;

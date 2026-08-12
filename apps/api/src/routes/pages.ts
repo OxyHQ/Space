@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import mongoose from 'mongoose';
+import { isLiveEntityId } from '@oxyhq/db';
 import { z } from 'zod';
-import { Page, type IPage } from '../models/page.js';
-import { Block } from '../models/block.js';
+import { getDb } from '../db/client.js';
+import type { PageRow } from '../repositories/pages.js';
 import {
-  Database,
-  type DatabaseSchema,
-} from '../models/database.js';
+  createPage,
+  deletePageTree,
+  findPageAncestry,
+  findPageById,
+  listPages,
+  nextSiblingOrder,
+  updatePage,
+} from '../repositories/pages.js';
+import {
+  duplicateBlocksToPage,
+  listBlocksForPageByOrder,
+} from '../repositories/blocks.js';
+import { findDatabaseById } from '../repositories/databases.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireWorkspaceMember } from '../middleware/workspace.js';
 import { log } from '../lib/logger.js';
@@ -23,18 +33,26 @@ const router = Router();
 router.use(authenticateToken);
 
 /**
- * Zod helper: 24-char hex MongoDB ObjectId.
- * Using `mongoose.Types.ObjectId.isValid` is more permissive than we want
- * (accepts 12-byte strings); restrict to the canonical hex form.
+ * Zod helper: an id this schema could have stored.
+ *
+ * `isLiveEntityId` accepts the two shapes a `generatedId()` primary key holds —
+ * a uuid v7 for every row created after the cutover, and a 24-char ObjectId hex
+ * for every row a backfill copies over verbatim. A 24-hex-only regex, which is
+ * what this was, rejects every id the Postgres schema now mints.
+ *
+ * It is a 400 guard and nothing more: it never gates a lookup, because the
+ * query already answers "no such row" for free, and a shape predicate used as a
+ * precondition fails closed on a valid id it has not been taught about.
+ * `workspaceId` goes through it too — workspaces are still Mongoose, so those
+ * ids are ObjectIds today and uuid v7 once that domain ports; the predicate
+ * spans both without needing to know which.
  */
-const objectIdSchema = z
-  .string()
-  .regex(/^[0-9a-fA-F]{24}$/u, 'Invalid id');
+const entityIdSchema = z.string().refine(isLiveEntityId, 'Invalid id');
 
 const listQuerySchema = z.object({
-  workspaceId: objectIdSchema,
+  workspaceId: entityIdSchema,
   parentId: z
-    .union([objectIdSchema, z.literal('null'), z.literal('root')])
+    .union([entityIdSchema, z.literal('null'), z.literal('root')])
     .optional(),
   includeArchived: z
     .union([z.literal('true'), z.literal('false')])
@@ -51,8 +69,8 @@ const listQuerySchema = z.object({
 });
 
 const createPageSchema = z.object({
-  workspaceId: objectIdSchema,
-  parentId: objectIdSchema.nullable().optional(),
+  workspaceId: entityIdSchema,
+  parentId: entityIdSchema.nullable().optional(),
   title: z.string().max(2000).optional(),
   icon: z.string().max(200).nullable().optional(),
   cover: z.string().max(2000).nullable().optional(),
@@ -64,7 +82,7 @@ const updatePageSchema = z
     icon: z.string().max(200).nullable().optional(),
     cover: z.string().max(2000).nullable().optional(),
     coverPosition: z.number().min(0).max(100).optional(),
-    parentId: objectIdSchema.nullable().optional(),
+    parentId: entityIdSchema.nullable().optional(),
     order: z.number().finite().optional(),
     archived: z.boolean().optional(),
     favorited: z.boolean().optional(),
@@ -104,9 +122,9 @@ function assertWorkspace(req: Request, res: Response): string | null {
 async function checkWorkspaceMembership(
   req: Request,
   res: Response,
-  workspaceId: mongoose.Types.ObjectId | string,
+  workspaceId: string,
 ): Promise<boolean> {
-  req.headers['x-workspace-id'] = String(workspaceId);
+  req.headers['x-workspace-id'] = workspaceId;
   const passed = await new Promise<boolean>((resolve) => {
     const next: NextFunction = (err?: unknown) => {
       if (err) {
@@ -126,58 +144,35 @@ async function checkWorkspaceMembership(
 }
 
 /**
- * Subset of `IPage` shared by both Mongoose Documents and lean POJOs —
- * everything `serializePage` reads.
+ * The wire shape of a page.
+ *
+ * `_id` is gone. It was a Mongo artefact that this serializer emitted BESIDE
+ * `id`, holding the same value, and the storage layer that produced it no
+ * longer exists — so it is deleted rather than carried forward as an alias.
+ * Every consumer of it is listed in the rewiring PR; `apps/app` reads
+ * `page._id` in twenty-odd files and has to move to `page.id`.
+ *
+ * Every column is already the right JavaScript type coming out of drizzle, so
+ * there is nothing here to coerce: `String(...)` around each id was undoing
+ * `ObjectId`, and `?? 50` / `?? false` were defending against a document
+ * written before those fields had defaults. `coverPosition`, `favorited` and
+ * `properties` are all `NOT NULL DEFAULT` in the schema.
  */
-type SerializablePage = Pick<
-  IPage,
-  | '_id'
-  | 'workspaceId'
-  | 'parentId'
-  | 'title'
-  | 'icon'
-  | 'cover'
-  | 'coverPosition'
-  | 'ownerId'
-  | 'archived'
-  | 'favorited'
-  | 'order'
-  | 'createdAt'
-  | 'updatedAt'
-> & {
-  databaseId?: mongoose.Types.ObjectId | null;
-  properties?:
-    | Map<string, unknown>
-    | Record<string, unknown>
-    | undefined;
-};
-
-function serializePage(page: SerializablePage) {
-  const properties: Record<string, unknown> = {};
-  if (page.properties) {
-    if (page.properties instanceof Map) {
-      for (const [key, value] of page.properties.entries()) {
-        properties[key] = value;
-      }
-    } else {
-      Object.assign(properties, page.properties as Record<string, unknown>);
-    }
-  }
+function serializePage(page: PageRow) {
   return {
-    id: String(page._id),
-    _id: String(page._id),
-    workspaceId: String(page.workspaceId),
-    parentId: page.parentId ? String(page.parentId) : null,
+    id: page.id,
+    workspaceId: page.workspaceId,
+    parentId: page.parentId,
     title: page.title,
     icon: page.icon,
     cover: page.cover,
-    coverPosition: page.coverPosition ?? 50,
+    coverPosition: page.coverPosition,
     ownerId: page.ownerId,
     archived: page.archived,
-    favorited: page.favorited ?? false,
+    favorited: page.favorited,
     order: page.order,
-    databaseId: page.databaseId ? String(page.databaseId) : null,
-    properties,
+    databaseId: page.databaseId,
+    properties: page.properties,
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
   };
@@ -209,30 +204,27 @@ router.get(
         return;
       }
 
-      const filter: Record<string, unknown> = {
-        workspaceId: new mongoose.Types.ObjectId(workspaceId),
-      };
-
-      if (query.parentId !== undefined) {
-        filter.parentId =
-          query.parentId === 'null' || query.parentId === 'root'
-            ? null
-            : new mongoose.Types.ObjectId(query.parentId);
-      }
-
+      // `archived` is three-valued and the three cases are not symmetric:
+      // absent means "archived and active together", which only
+      // `?includeArchived=true` (without `?archivedOnly=true`) asks for.
+      let archived: boolean | undefined;
       if (query.archivedOnly) {
-        filter.archived = true;
+        archived = true;
       } else if (!query.includeArchived) {
-        filter.archived = false;
+        archived = false;
       }
 
-      if (query.favoritedOnly) {
-        filter.favorited = true;
-      }
-
-      const pages = await Page.find(filter)
-        .sort({ order: 1, createdAt: 1 })
-        .lean();
+      const pages = await listPages(getDb(), {
+        workspaceId,
+        parentId:
+          query.parentId === undefined
+            ? undefined
+            : query.parentId === 'null' || query.parentId === 'root'
+              ? null
+              : query.parentId,
+        archived,
+        favoritedOnly: query.favoritedOnly,
+      });
 
       res.json({ pages: pages.map((p) => serializePage(p)) });
     } catch (error: unknown) {
@@ -248,9 +240,9 @@ router.get(
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
 
-    const page = await Page.findById(params.id).lean();
+    const page = await findPageById(getDb(), params.id);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -296,43 +288,41 @@ router.post(
         return;
       }
 
+      const db = getDb();
+
       // If parentId provided, ensure the parent belongs to the same workspace.
       if (body.parentId) {
-        const parent = await Page.findById(body.parentId).select('workspaceId').lean();
+        const parent = await findPageById(db, body.parentId);
         if (!parent) {
           res.status(404).json({ error: 'Parent page not found' });
           return;
         }
-        if (String(parent.workspaceId) !== workspaceId) {
+        if (parent.workspaceId !== workspaceId) {
           res.status(400).json({ error: 'Parent page is in a different workspace' });
           return;
         }
       }
 
-      // Compute next order: max(order) + 1 among siblings.
-      const siblingFilter: Record<string, unknown> = {
-        workspaceId: new mongoose.Types.ObjectId(workspaceId),
-        parentId: body.parentId
-          ? new mongoose.Types.ObjectId(body.parentId)
-          : null,
-      };
-      const last = await Page.findOne(siblingFilter)
-        .sort({ order: -1 })
-        .select('order')
-        .lean();
-      const nextOrder = last ? last.order + 1 : 0;
+      // `max(order) + 1` among siblings, then insert. Read and write are
+      // deliberately NOT wrapped in a transaction: under READ COMMITTED one
+      // would take no lock and two concurrent creates would still read the same
+      // maximum, so it would buy nothing while implying the race was closed.
+      // The race is the one Mongo had, and `order` is a client-writable
+      // `double precision` that `PATCH /api/pages/:id` renumbers anyway.
+      const order = await nextSiblingOrder(db, {
+        workspaceId,
+        parentId: body.parentId ?? null,
+      });
 
-      const page = await Page.create({
-        workspaceId: new mongoose.Types.ObjectId(workspaceId),
-        parentId: body.parentId
-          ? new mongoose.Types.ObjectId(body.parentId)
-          : null,
+      const page = await createPage(db, {
+        workspaceId,
+        parentId: body.parentId ?? null,
         title: body.title ?? '',
         icon: body.icon ?? null,
         cover: body.cover ?? null,
         ownerId: userId,
         archived: false,
-        order: nextOrder,
+        order,
       });
 
       res.status(201).json({ page: serializePage(page) });
@@ -349,10 +339,11 @@ router.post(
  */
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = updatePageSchema.parse(req.body);
 
-    const page = await Page.findById(params.id);
+    const db = getDb();
+    const page = await findPageById(db, params.id);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -361,33 +352,35 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    if (body.parentId !== undefined) {
-      if (body.parentId === null) {
-        page.parentId = null;
-      } else {
-        if (body.parentId === String(page._id)) {
-          res.status(400).json({ error: 'A page cannot be its own parent' });
-          return;
-        }
-        const parent = await Page.findById(body.parentId).select('workspaceId').lean();
-        if (!parent) {
-          res.status(404).json({ error: 'Parent page not found' });
-          return;
-        }
-        if (String(parent.workspaceId) !== String(page.workspaceId)) {
-          res.status(400).json({ error: 'Parent page is in a different workspace' });
-          return;
-        }
-        page.parentId = new mongoose.Types.ObjectId(body.parentId);
+    if (body.parentId !== undefined && body.parentId !== null) {
+      if (body.parentId === page.id) {
+        res.status(400).json({ error: 'A page cannot be its own parent' });
+        return;
+      }
+      const parent = await findPageById(db, body.parentId);
+      if (!parent) {
+        res.status(404).json({ error: 'Parent page not found' });
+        return;
+      }
+      if (parent.workspaceId !== page.workspaceId) {
+        res.status(400).json({ error: 'Parent page is in a different workspace' });
+        return;
       }
     }
-    if (body.title !== undefined) page.title = body.title;
-    if (body.icon !== undefined) page.icon = body.icon;
-    if (body.cover !== undefined) page.cover = body.cover;
-    if (body.coverPosition !== undefined) page.coverPosition = body.coverPosition;
-    if (body.order !== undefined) page.order = body.order;
-    if (body.archived !== undefined) page.archived = body.archived;
-    if (body.favorited !== undefined) page.favorited = body.favorited;
+
+    // Built by assignment rather than by spreading `body`, because `title` is
+    // written twice below and the second write has to win.
+    const patch = {
+      parentId: body.parentId,
+      title: body.title,
+      icon: body.icon,
+      cover: body.cover,
+      coverPosition: body.coverPosition,
+      order: body.order,
+      archived: body.archived,
+      favorited: body.favorited,
+      mergeProperties: undefined as Record<string, unknown> | undefined,
+    };
 
     if (body.properties) {
       if (!page.databaseId) {
@@ -396,49 +389,53 @@ router.patch('/:id', async (req: Request, res: Response) => {
         });
         return;
       }
-      const db = await Database.findById(page.databaseId).lean<{
-        propertiesSchema: DatabaseSchema;
-      } | null>();
-      if (!db) {
+      const database = await findDatabaseById(db, page.databaseId);
+      if (!database) {
         res.status(404).json({ error: 'Database not found for row' });
         return;
       }
       const schemaById = new Map(
-        db.propertiesSchema.properties.map((p) => [p.id, p]),
+        database.propertiesSchema.properties.map((p) => [p.id, p]),
       );
-      const currentProps =
-        page.properties instanceof Map
-          ? page.properties
-          : new Map<string, unknown>();
+      // Only the keys that survive validation are sent. `mergeProperties` is a
+      // shallow top-level merge into the stored object, so the keys the request
+      // does not mention keep their values — which is what `.set()` on the
+      // page's existing property Map did.
+      const merge: Record<string, unknown> = {};
       for (const [key, raw] of Object.entries(body.properties)) {
         const prop = schemaById.get(key);
         if (!prop) continue;
         const parsed = parsePropertyValue(prop.type, raw);
         if (!parsed) continue;
-        currentProps.set(key, serializeParsedValue(parsed));
-        // Keep title <-> Name in sync.
+        merge[key] = serializeParsedValue(parsed);
+        // Keep title <-> Name in sync. This overwrites `body.title` when both
+        // are submitted, matching the order the two writes happened in before.
         if (key === NAME_PROPERTY_ID && parsed.kind === 'text') {
-          page.title = parsed.text;
+          patch.title = parsed.text;
         }
       }
-      page.properties = currentProps;
-      page.markModified('properties');
+      patch.mergeProperties = merge;
     }
 
-    // Sync the Name property when the title changes on a database row.
+    // Sync the Name property when the title changes on a database row. Runs
+    // after the loop above, so an explicit `title` wins over a submitted `name`
+    // property for what gets STORED in `properties.name` — while the loop wins
+    // for what gets stored in `title`. That asymmetry is the existing behaviour
+    // and is preserved rather than quietly reconciled here.
     if (body.title !== undefined && page.databaseId) {
-      const currentProps =
-        page.properties instanceof Map
-          ? page.properties
-          : new Map<string, unknown>();
-      currentProps.set(NAME_PROPERTY_ID, { text: body.title });
-      page.properties = currentProps;
-      page.markModified('properties');
+      patch.mergeProperties = {
+        ...patch.mergeProperties,
+        [NAME_PROPERTY_ID]: { text: body.title },
+      };
     }
 
-    await page.save();
+    const updated = await updatePage(db, page.id, patch);
+    if (!updated) {
+      res.status(404).json({ error: 'Page not found' });
+      return;
+    }
 
-    res.json({ page: serializePage(page) });
+    res.json({ page: serializePage(updated) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to update page');
@@ -453,10 +450,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const hard = req.query.hard === 'true';
 
-    const page = await Page.findById(params.id);
+    const db = getDb();
+    const page = await findPageById(db, params.id);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -472,20 +470,27 @@ router.delete('/:id', async (req: Request, res: Response) => {
         return;
       }
 
-      // Cascade: remove all blocks for this page and its descendants.
-      const descendantIds = await collectDescendantPageIds(page._id as mongoose.Types.ObjectId);
-      const allPageIds = [page._id as mongoose.Types.ObjectId, ...descendantIds];
-      await Block.deleteMany({ pageId: { $in: allPageIds } });
-      await Page.deleteMany({ _id: { $in: allPageIds } });
+      // One recursive statement rather than the BFS-then-two-`deleteMany` this
+      // replaces, and NOT a bare `delete from pages where id = ?` relying on
+      // the referential action. `pages.parentId` is `ON DELETE SET NULL`, not
+      // CASCADE — deliberately, so that emptying the trash cannot destroy live
+      // children of an archived page — so a single-row delete here would
+      // ORPHAN the subtree instead of removing it. Blocks still go by cascade;
+      // the explicit `Block.deleteMany` has no counterpart because
+      // `blocks.pageId` is CASCADE.
+      const deleted = await deletePageTree(db, page.id);
 
-      res.json({ success: true, deleted: allPageIds.length });
+      res.json({ success: true, deleted });
       return;
     }
 
-    page.archived = true;
-    await page.save();
+    const archivedPage = await updatePage(db, page.id, { archived: true });
+    if (!archivedPage) {
+      res.status(404).json({ error: 'Page not found' });
+      return;
+    }
 
-    res.json({ page: serializePage(page) });
+    res.json({ page: serializePage(archivedPage) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to delete page');
@@ -494,35 +499,16 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 /**
- * Recursively collect every descendant page id beneath `rootId`.
- * Uses iterative BFS to bound recursion depth.
- */
-async function collectDescendantPageIds(
-  rootId: mongoose.Types.ObjectId,
-): Promise<mongoose.Types.ObjectId[]> {
-  const collected: mongoose.Types.ObjectId[] = [];
-  let frontier: mongoose.Types.ObjectId[] = [rootId];
-  while (frontier.length > 0) {
-    const children = await Page.find({ parentId: { $in: frontier } })
-      .select('_id')
-      .lean();
-    const childIds = children.map((c) => c._id as mongoose.Types.ObjectId);
-    collected.push(...childIds);
-    frontier = childIds;
-  }
-  return collected;
-}
-
-/**
  * POST /api/pages/:id/duplicate
  * Duplicates the page and all its blocks. Children pages are NOT duplicated
  * in Phase 1 (matches Notion's "Duplicate" default of single-page copy).
  */
 router.post('/:id/duplicate', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
 
-    const source = await Page.findById(params.id).lean();
+    const db = getDb();
+    const source = await findPageById(db, params.id);
     if (!source) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -537,48 +523,34 @@ router.post('/:id/duplicate', async (req: Request, res: Response) => {
       return;
     }
 
-    // Next order among siblings of the source.
-    const siblingFilter: Record<string, unknown> = {
-      workspaceId: source.workspaceId,
-      parentId: source.parentId ?? null,
-    };
-    const last = await Page.findOne(siblingFilter)
-      .sort({ order: -1 })
-      .select('order')
-      .lean();
-    const nextOrder = last ? last.order + 1 : 0;
-
-    const duplicate = await Page.create({
-      workspaceId: source.workspaceId,
-      parentId: source.parentId ?? null,
-      title: source.title ? `${source.title} (copy)` : '(copy)',
-      icon: source.icon,
-      cover: source.cover,
-      ownerId: userId,
-      archived: false,
-      order: nextOrder,
-    });
-
-    // Duplicate blocks preserving parentBlockId hierarchy.
-    const blocks = await Block.find({ pageId: source._id }).lean();
-    if (blocks.length > 0) {
-      const idMap = new Map<string, mongoose.Types.ObjectId>();
-      // Create new ObjectIds upfront so we can rewire parent pointers in one insert.
-      const newDocs = blocks.map((b) => {
-        const newId = new mongoose.Types.ObjectId();
-        idMap.set(String(b._id), newId);
-        return { ...b, _id: newId };
+    // The new page and its copied blocks are ONE logical write, so they commit
+    // together. The two-statement version this replaces could leave a page with
+    // no blocks behind a 500, and Mongo had no way to promise otherwise.
+    //
+    // The transaction does NOT close the sibling-order race — `nextSiblingOrder`
+    // takes no lock under READ COMMITTED — it is here for the page/blocks pair.
+    const duplicate = await db.transaction(async (tx) => {
+      const order = await nextSiblingOrder(tx, {
+        workspaceId: source.workspaceId,
+        parentId: source.parentId,
       });
-      const rewired = newDocs.map((b) => ({
-        _id: b._id,
-        pageId: duplicate._id,
-        parentBlockId: b.parentBlockId ? idMap.get(String(b.parentBlockId)) ?? null : null,
-        type: b.type,
-        content: b.content,
-        order: b.order,
-      }));
-      await Block.insertMany(rewired);
-    }
+
+      const created = await createPage(tx, {
+        workspaceId: source.workspaceId,
+        parentId: source.parentId,
+        title: source.title ? `${source.title} (copy)` : '(copy)',
+        icon: source.icon,
+        cover: source.cover,
+        ownerId: userId,
+        archived: false,
+        order,
+      });
+
+      // Children pages are NOT duplicated (see the route comment above), so the
+      // copy takes the source's blocks and nothing else.
+      await duplicateBlocksToPage(tx, source.id, created.id);
+      return created;
+    });
 
     res.status(201).json({ page: serializePage(duplicate) });
   } catch (error: unknown) {
@@ -596,11 +568,10 @@ router.post('/:id/duplicate', async (req: Request, res: Response) => {
  */
 router.get('/:id/breadcrumb', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
 
-    const head = await Page.findById(params.id)
-      .select('workspaceId parentId title icon')
-      .lean();
+    const db = getDb();
+    const head = await findPageById(db, params.id);
     if (!head) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -609,27 +580,12 @@ router.get('/:id/breadcrumb', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, head.workspaceId);
     if (!ok) return;
 
-    const chain: Array<{ id: string; title: string; icon: string | null }> = [];
-    const seen = new Set<string>();
-    let cursor: typeof head | null = head;
-    let depth = 0;
-    while (cursor && depth < 32) {
-      const id = String(cursor._id);
-      if (seen.has(id)) break;
-      seen.add(id);
-      chain.unshift({
-        id,
-        title: cursor.title ?? '',
-        icon: cursor.icon ?? null,
-      });
-      if (!cursor.parentId) break;
-      cursor = await Page.findById(cursor.parentId)
-        .select('workspaceId parentId title icon')
-        .lean();
-      depth += 1;
-    }
+    // One recursive walk instead of one query per level. The depth bound and
+    // the cycle handling that the `seen` set provided are both inside
+    // `findPageAncestry`, which returns root-first exactly as the `unshift` did.
+    const breadcrumb = await findPageAncestry(db, head.id);
 
-    res.json({ breadcrumb: chain });
+    res.json({ breadcrumb });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to fetch page breadcrumb');
@@ -644,8 +600,8 @@ router.get('/:id/breadcrumb', async (req: Request, res: Response) => {
  * a paragraph (just `text`). Lists/todos honour the parentBlockId hierarchy.
  */
 interface RenderableBlock {
-  _id: mongoose.Types.ObjectId;
-  parentBlockId: mongoose.Types.ObjectId | null;
+  id: string;
+  parentBlockId: string | null;
   type: string;
   content: Record<string, unknown>;
   order: number;
@@ -663,7 +619,7 @@ function renderBlockMarkdown(
 ): string {
   const indent = '  '.repeat(depth);
   const text = textOf(block.content);
-  const children = childrenByParent.get(String(block._id)) ?? [];
+  const children = childrenByParent.get(block.id) ?? [];
   const childMd = children
     .map((c) => renderBlockMarkdown(c, childrenByParent, depth + 1))
     .join('\n');
@@ -730,10 +686,11 @@ const exportQuerySchema = z.object({
  */
 router.get('/:id/export', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     exportQuerySchema.parse(req.query);
 
-    const page = await Page.findById(params.id).lean();
+    const db = getDb();
+    const page = await findPageById(db, params.id);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -742,24 +699,20 @@ router.get('/:id/export', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const blocks = await Block.find({ pageId: page._id })
-      .sort({ order: 1 })
-      .lean();
+    const blocks = await listBlocksForPageByOrder(db, page.id);
 
     const childrenByParent = new Map<string, RenderableBlock[]>();
     const roots: RenderableBlock[] = [];
     for (const b of blocks) {
       const renderable: RenderableBlock = {
-        _id: b._id as mongoose.Types.ObjectId,
-        parentBlockId: b.parentBlockId
-          ? (b.parentBlockId as mongoose.Types.ObjectId)
-          : null,
+        id: b.id,
+        parentBlockId: b.parentBlockId,
         type: b.type,
-        content: (b.content ?? {}) as Record<string, unknown>,
+        content: b.content,
         order: b.order,
       };
       if (renderable.parentBlockId) {
-        const key = String(renderable.parentBlockId);
+        const key = renderable.parentBlockId;
         const list = childrenByParent.get(key) ?? [];
         list.push(renderable);
         childrenByParent.set(key, list);

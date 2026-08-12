@@ -53,43 +53,14 @@ import mongoose, { Schema, Model, Document } from 'mongoose';
  * and per-segment text/background color without exposing rich text to APIs
  * that only consume plain `text`.
  */
-export interface Segment {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-  strike?: boolean;
-  code?: boolean;
-  color?: BlockColor;
-  background?: BlockColor;
-  link?: string;
-}
-
-export type BlockColor =
-  | 'default'
-  | 'gray'
-  | 'brown'
-  | 'orange'
-  | 'yellow'
-  | 'green'
-  | 'blue'
-  | 'purple'
-  | 'pink'
-  | 'red';
-
-export const BLOCK_COLORS: readonly BlockColor[] = [
-  'default',
-  'gray',
-  'brown',
-  'orange',
-  'yellow',
-  'green',
-  'blue',
-  'purple',
-  'pink',
-  'red',
-] as const;
-
+/**
+ * `Segment`, `BlockColor` and `BLOCK_COLORS` used to live here and now live in
+ * `routes/blocks.ts`, the only thing that ever read them. They were content
+ * VOCABULARY co-located with a storage model — the class of export that keeps a
+ * ported route importing its old model for a reason unrelated to the model, and
+ * that breaks silently the day the module is deleted. `Segment` had no consumer
+ * at all.
+ */
 export type BlockContent = Record<string, unknown>;
 
 export type BlockType =
