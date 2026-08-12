@@ -268,7 +268,17 @@ export const blocks = pgTable(
      * both the migration and the snapshot.
      */
     parentBlockId: text().references((): AnyPgColumn => blocks.id, { onDelete: 'cascade' }),
-    type: text().notNull(),
+    /**
+     * `$type` so a SELECT is typed as narrowly as the CHECK below constrains
+     * it, the same way `content` and `pages.properties` are. Without it a read
+     * comes back as bare `string` while an insert is already narrowed by
+     * `blocksRepository.CreateBlockInput`, and `routes/blocks.ts` — which
+     * re-normalises content against the block's CURRENT type when only the type
+     * changed — would need a cast or a guard for a state the CHECK makes
+     * unreachable. It is a TypeScript annotation only: the rendered DDL is
+     * byte-identical with and without it.
+     */
+    type: text().$type<BlockType>().notNull(),
     content: jsonb().$type<BlockContent>().notNull().default({}),
     /** Sibling ordering within `(pageId, parentBlockId)`. See `pages.order`. */
     order: doublePrecision().notNull().default(0),
