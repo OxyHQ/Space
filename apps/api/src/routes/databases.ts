@@ -1,31 +1,56 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import mongoose from 'mongoose';
 import { randomUUID } from 'crypto';
+import { isLiveEntityId } from '@oxyhq/db';
 import { z } from 'zod';
+import { getDb, type PgHandle } from '../db/client.js';
 import {
-  Database,
   DATABASE_PROPERTY_TYPES,
+  DATABASE_VIEW_TYPES,
+  DEFAULT_VIEW_PAGE_SIZE,
+  EMPTY_FILTER_GROUP,
   SELECT_COLORS,
   type DatabaseProperty,
   type DatabasePropertyType,
   type DatabaseSchema,
-  type IDatabase,
-  type PropertyConfig,
-  type SelectOption,
-} from '../models/database.js';
-import {
-  DatabaseView,
-  DATABASE_VIEW_TYPES,
   type DatabaseViewType,
   type Filter,
-  type FilterGroup,
-  type IDatabaseView,
+  type PropertyConfig,
+  type SelectOption,
   type ViewConfig,
   type ViewSort,
-} from '../models/database-view.js';
-import { Page, type IPage } from '../models/page.js';
-import { Block } from '../models/block.js';
+} from '../db/schema/databases.js';
+import type { PageRow } from '../repositories/pages.js';
+import {
+  countViews,
+  deleteDatabase,
+  deleteDatabaseView,
+  deleteViewsByDatabase,
+  demoteOtherDefaultViews,
+  findDatabaseById,
+  findDatabaseWorkspaceId,
+  findDefaultView,
+  findFirstViewByOrder,
+  findViewById,
+  insertDatabase,
+  insertDatabaseView,
+  listDatabasesByWorkspace,
+  listViewsByDatabase,
+  nextViewOrder,
+  updateDatabase,
+  updateDatabaseView,
+  writeDatabaseSchema,
+  type DatabaseRecord,
+  type DatabaseViewRecord,
+} from '../repositories/databases.js';
+import {
+  createPage,
+  deleteDatabaseRows,
+  findPageById,
+  listDatabaseRows,
+  nextDatabaseRowOrder,
+  removePropertyFromDatabaseRows,
+} from '../repositories/pages.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireWorkspaceMember } from '../middleware/workspace.js';
 import { log } from '../lib/logger.js';
@@ -49,9 +74,19 @@ const router = Router();
 
 router.use(authenticateToken);
 
-const objectIdSchema = z
-  .string()
-  .regex(/^[0-9a-fA-F]{24}$/u, 'Invalid id');
+/**
+ * The id shape a row can actually have.
+ *
+ * Replaces a 24-hex ObjectId regex. `isLiveEntityId` is the one place either
+ * shape is spelled out: a uuid v7 for every row created on Postgres, and a
+ * 24-char ObjectId hex for every row a backfill copied over verbatim — both are
+ * live simultaneously, so neither may be rejected. A 24-hex regex here would
+ * 400 every id the schema now generates.
+ *
+ * It exists to turn malformed input into a 400 and nothing else; it is never a
+ * precondition on a query, which already answers "no such row" for free.
+ */
+const entityIdSchema = z.string().refine(isLiveEntityId, 'Invalid id');
 
 const propertyTypeSchema = z.enum(
   DATABASE_PROPERTY_TYPES as readonly [
@@ -89,7 +124,7 @@ const propertyConfigSchema = z
       .optional(),
     precision: z.number().int().min(0).max(10).optional(),
     includeTime: z.boolean().optional(),
-    targetDatabaseId: objectIdSchema.optional(),
+    targetDatabaseId: entityIdSchema.optional(),
     twoWay: z.boolean().optional(),
     relationPropertyId: z.string().optional(),
     targetPropertyId: z.string().optional(),
@@ -112,13 +147,13 @@ const databaseSchemaSchema = z.object({
 });
 
 const createDatabaseSchema = z.object({
-  workspaceId: objectIdSchema,
+  workspaceId: entityIdSchema,
   name: z.string().max(2000).optional(),
   icon: z.string().max(200).nullable().optional(),
   cover: z.string().max(2000).nullable().optional(),
   schema: databaseSchemaSchema.optional(),
   isInline: z.boolean().optional(),
-  parentPageId: objectIdSchema.nullable().optional(),
+  parentPageId: entityIdSchema.nullable().optional(),
 });
 
 const updateDatabaseSchema = z
@@ -221,7 +256,7 @@ const createViewSchema = z.object({
 });
 
 const listDatabasesQuerySchema = z.object({
-  workspaceId: objectIdSchema,
+  workspaceId: entityIdSchema,
   includeArchived: z
     .union([z.literal('true'), z.literal('false')])
     .optional()
@@ -229,7 +264,7 @@ const listDatabasesQuerySchema = z.object({
 });
 
 const listRowsQuerySchema = z.object({
-  viewId: objectIdSchema.optional(),
+  viewId: entityIdSchema.optional(),
   cursor: z
     .string()
     .regex(/^\d+$/u)
@@ -261,9 +296,9 @@ function assertWorkspace(req: Request, res: Response): string | null {
 async function checkWorkspaceMembership(
   req: Request,
   res: Response,
-  workspaceId: mongoose.Types.ObjectId | string,
+  workspaceId: string,
 ): Promise<boolean> {
-  req.headers['x-workspace-id'] = String(workspaceId);
+  req.headers['x-workspace-id'] = workspaceId;
   const passed = await new Promise<boolean>((resolve) => {
     const next: NextFunction = (err?: unknown) => {
       if (err) {
@@ -282,66 +317,31 @@ async function checkWorkspaceMembership(
   return !res.headersSent;
 }
 
-type SerializableDatabase = Pick<
-  IDatabase,
-  | '_id'
-  | 'workspaceId'
-  | 'name'
-  | 'icon'
-  | 'cover'
-  | 'ownerId'
-  | 'propertiesSchema'
-  | 'isInline'
-  | 'parentPageId'
-  | 'archived'
-  | 'createdAt'
-  | 'updatedAt'
->;
-
 /**
  * Wire format exposes the property schema as `schema` (mirrors the design
- * doc), even though the stored field name is `propertiesSchema`.
+ * doc), even though the stored column is `properties_schema`.
  */
-function serializeDatabase(db: SerializableDatabase) {
+function serializeDatabase(db: DatabaseRecord) {
   return {
-    id: String(db._id),
-    workspaceId: String(db.workspaceId),
+    id: db.id,
+    workspaceId: db.workspaceId,
     name: db.name,
     icon: db.icon,
     cover: db.cover,
     ownerId: db.ownerId,
     schema: db.propertiesSchema,
     isInline: db.isInline,
-    parentPageId: db.parentPageId ? String(db.parentPageId) : null,
+    parentPageId: db.parentPageId,
     archived: db.archived,
     createdAt: db.createdAt,
     updatedAt: db.updatedAt,
   };
 }
 
-type SerializableView = Pick<
-  IDatabaseView,
-  | '_id'
-  | 'databaseId'
-  | 'name'
-  | 'type'
-  | 'isDefault'
-  | 'filters'
-  | 'sorts'
-  | 'groupBy'
-  | 'hiddenProperties'
-  | 'frozenProperties'
-  | 'pageSize'
-  | 'config'
-  | 'order'
-  | 'createdAt'
-  | 'updatedAt'
->;
-
-function serializeView(view: SerializableView) {
+function serializeView(view: DatabaseViewRecord) {
   return {
-    id: String(view._id),
-    databaseId: String(view.databaseId),
+    id: view.id,
+    databaseId: view.databaseId,
     name: view.name,
     type: view.type,
     isDefault: view.isDefault,
@@ -358,47 +358,24 @@ function serializeView(view: SerializableView) {
   };
 }
 
-type SerializableRow = Pick<
-  IPage,
-  | '_id'
-  | 'workspaceId'
-  | 'parentId'
-  | 'title'
-  | 'icon'
-  | 'cover'
-  | 'ownerId'
-  | 'archived'
-  | 'order'
-  | 'databaseId'
-  | 'createdAt'
-  | 'updatedAt'
-> & {
-  properties: Map<string, unknown> | Record<string, unknown> | undefined;
-};
-
 interface RowSerializationOpts {
   derived: Record<string, unknown>;
 }
 
-function serializeRow(row: SerializableRow, opts?: RowSerializationOpts) {
-  const properties: Record<string, unknown> = {};
-  if (row.properties) {
-    if (row.properties instanceof Map) {
-      for (const [key, value] of row.properties.entries()) {
-        properties[key] = value;
-      }
-    } else {
-      Object.assign(properties, row.properties as Record<string, unknown>);
-    }
-  }
+/**
+ * A row is a page. `id` is the only id on the wire — the `_id` this used to
+ * emit alongside it was the Mongo primary key under its storage name, and
+ * carrying it forward would publish a field no row has.
+ */
+function serializeRow(row: PageRow, opts?: RowSerializationOpts) {
+  const properties: Record<string, unknown> = { ...row.properties };
   if (opts) Object.assign(properties, opts.derived);
 
   return {
-    id: String(row._id),
-    _id: String(row._id),
-    workspaceId: String(row.workspaceId),
-    parentId: row.parentId ? String(row.parentId) : null,
-    databaseId: row.databaseId ? String(row.databaseId) : null,
+    id: row.id,
+    workspaceId: row.workspaceId,
+    parentId: row.parentId,
+    databaseId: row.databaseId,
     title: row.title,
     icon: row.icon,
     cover: row.cover,
@@ -452,7 +429,8 @@ function normalizeIncomingProperties(
  * client.
  */
 async function resolveDerivedProperties(
-  row: SerializableRow,
+  handle: PgHandle,
+  row: PageRow,
   schema: DatabaseSchema,
 ): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
@@ -487,7 +465,7 @@ async function resolveDerivedProperties(
         break;
       }
       case 'rollup': {
-        const value = await resolveRollup(prop, row);
+        const value = await resolveRollup(handle, prop, row);
         out[prop.id] =
           value === null
             ? { text: '' }
@@ -504,31 +482,31 @@ async function resolveDerivedProperties(
 }
 
 /**
- * Build a brand-new database with sensible defaults: validated schema,
- * one default table view, and (if no schema provided) Notion-style
- * Name + Status properties.
+ * The view every new database is created with.
+ *
+ * Takes a handle rather than reaching for the pool: `POST /databases` creates
+ * the database and this view in ONE transaction. Under Mongo they were two
+ * independent writes, so a failure between them left a database with no views
+ * at all — a state the rest of the route refuses to produce (`DELETE
+ * /:id/views/:viewId` will not remove the last one). This makes the storage
+ * uphold an invariant the code already tried to hold; it does not invent one.
  */
 async function createDefaultViewForDatabase(
-  databaseId: mongoose.Types.ObjectId,
+  handle: PgHandle,
+  databaseId: string,
 ): Promise<void> {
-  const defaultFilter: FilterGroup = {
-    kind: 'group',
-    combinator: 'and',
-    filters: [],
-  };
-  const defaultConfig: ViewConfig = {};
-  await DatabaseView.create({
+  await insertDatabaseView(handle, {
     databaseId,
     name: 'All',
     type: 'table',
     isDefault: true,
-    filters: defaultFilter,
+    filters: EMPTY_FILTER_GROUP,
     sorts: [],
     groupBy: null,
     hiddenProperties: [],
     frozenProperties: [],
-    pageSize: 50,
-    config: defaultConfig,
+    pageSize: DEFAULT_VIEW_PAGE_SIZE,
+    config: {},
     order: 0,
   });
 }
@@ -572,14 +550,10 @@ router.get('/', requireWorkspaceMember, async (req: Request, res: Response) => {
       return;
     }
 
-    const filter: Record<string, unknown> = {
-      workspaceId: new mongoose.Types.ObjectId(workspaceId),
-    };
-    if (!query.includeArchived) filter.archived = false;
-
-    const databases = await Database.find(filter)
-      .sort({ updatedAt: -1 })
-      .lean<SerializableDatabase[]>();
+    const databases = await listDatabasesByWorkspace(getDb(), {
+      workspaceId,
+      includeArchived: query.includeArchived,
+    });
 
     res.json({ databases: databases.map((d) => serializeDatabase(d)) });
   } catch (error: unknown) {
@@ -595,8 +569,9 @@ router.get('/', requireWorkspaceMember, async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
-    const db = await Database.findById(params.id).lean<SerializableDatabase | null>();
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -604,9 +579,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
     if (!ok) return;
 
-    const views = await DatabaseView.find({ databaseId: db._id })
-      .sort({ order: 1, createdAt: 1 })
-      .lean<SerializableView[]>();
+    const views = await listViewsByDatabase(handle, db.id);
 
     res.json({
       database: serializeDatabase(db),
@@ -648,16 +621,16 @@ router.post(
         return;
       }
 
+      const handle = getDb();
+
       // Inline DBs must point to a page in the same workspace.
       if (body.parentPageId) {
-        const parent = await Page.findById(body.parentPageId)
-          .select('workspaceId')
-          .lean();
+        const parent = await findPageById(handle, body.parentPageId);
         if (!parent) {
           res.status(404).json({ error: 'Parent page not found' });
           return;
         }
-        if (String(parent.workspaceId) !== workspaceId) {
+        if (parent.workspaceId !== workspaceId) {
           res
             .status(400)
             .json({ error: 'Parent page is in a different workspace' });
@@ -676,29 +649,25 @@ router.post(
           })
         : buildDefaultSchema();
 
-      const db = await Database.create({
-        workspaceId: new mongoose.Types.ObjectId(workspaceId),
-        name: body.name ?? 'Untitled',
-        icon: body.icon ?? null,
-        cover: body.cover ?? null,
-        ownerId: userId,
-        propertiesSchema,
-        isInline: body.isInline ?? false,
-        parentPageId: body.parentPageId
-          ? new mongoose.Types.ObjectId(body.parentPageId)
-          : null,
-        archived: false,
+      const created = await handle.transaction(async (tx) => {
+        const db = await insertDatabase(tx, {
+          workspaceId,
+          name: body.name ?? 'Untitled',
+          icon: body.icon ?? null,
+          cover: body.cover ?? null,
+          ownerId: userId,
+          propertiesSchema,
+          isInline: body.isInline ?? false,
+          parentPageId: body.parentPageId ?? null,
+          archived: false,
+        });
+        await createDefaultViewForDatabase(tx, db.id);
+        return { db, views: await listViewsByDatabase(tx, db.id) };
       });
 
-      await createDefaultViewForDatabase(db._id as mongoose.Types.ObjectId);
-
-      const views = await DatabaseView.find({ databaseId: db._id })
-        .sort({ order: 1, createdAt: 1 })
-        .lean<SerializableView[]>();
-
       res.status(201).json({
-        database: serializeDatabase(db),
-        views: views.map((v) => serializeView(v)),
+        database: serializeDatabase(created.db),
+        views: created.views.map((v) => serializeView(v)),
       });
     } catch (error: unknown) {
       if (handleZodError(error, res)) return;
@@ -714,10 +683,11 @@ router.post(
  */
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = updateDatabaseSchema.parse(req.body);
 
-    const db = await Database.findById(params.id);
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -725,13 +695,20 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
     if (!ok) return;
 
-    if (body.name !== undefined) db.name = body.name;
-    if (body.icon !== undefined) db.icon = body.icon;
-    if (body.cover !== undefined) db.cover = body.cover;
-    if (body.archived !== undefined) db.archived = body.archived;
-    await db.save();
+    // `undefined` and `null` are different instructions here: `icon` and
+    // `cover` are nullable and an explicit `null` must be written.
+    const updated = await updateDatabase(handle, db.id, {
+      name: body.name,
+      icon: body.icon,
+      cover: body.cover,
+      archived: body.archived,
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'Database not found' });
+      return;
+    }
 
-    res.json({ database: serializeDatabase(db) });
+    res.json({ database: serializeDatabase(updated) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to update database');
@@ -746,10 +723,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const hard = req.query.hard === 'true';
 
-    const db = await Database.findById(params.id);
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -762,23 +740,26 @@ router.delete('/:id', async (req: Request, res: Response) => {
         res.status(403).json({ error: 'Hard delete requires workspace owner role' });
         return;
       }
-      const rows = await Page.find({ databaseId: db._id })
-        .select('_id')
-        .lean<{ _id: mongoose.Types.ObjectId }[]>();
-      const rowIds = rows.map((r) => r._id);
-      if (rowIds.length > 0) {
-        await Block.deleteMany({ pageId: { $in: rowIds } });
-        await Page.deleteMany({ _id: { $in: rowIds } });
-      }
-      await DatabaseView.deleteMany({ databaseId: db._id });
-      await Database.deleteOne({ _id: db._id });
+      // Rows, views and the database leave together. Under Mongo these were
+      // four independent `deleteMany` calls, so a failure part-way left rows
+      // pointing at a database that no longer existed. Blocks go with their
+      // rows through `blocks.pageId ON DELETE CASCADE`, which is why the
+      // route's explicit `Block.deleteMany` has no counterpart.
+      await handle.transaction(async (tx) => {
+        await deleteDatabaseRows(tx, db.id);
+        await deleteViewsByDatabase(tx, db.id);
+        await deleteDatabase(tx, db.id);
+      });
       res.json({ success: true });
       return;
     }
 
-    db.archived = true;
-    await db.save();
-    res.json({ database: serializeDatabase(db) });
+    const archived = await updateDatabase(handle, db.id, { archived: true });
+    if (!archived) {
+      res.status(404).json({ error: 'Database not found' });
+      return;
+    }
+    res.json({ database: serializeDatabase(archived) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to delete database');
@@ -792,10 +773,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
 router.post('/:id/properties', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = addPropertySchema.parse(req.body);
 
-    const db = await Database.findById(params.id);
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -816,11 +798,17 @@ router.post('/:id/properties', async (req: Request, res: Response) => {
     }
 
     db.propertiesSchema.properties.push(property);
-    db.propertiesSchema = normalizeSchema(db.propertiesSchema);
-    db.markModified('propertiesSchema');
-    await db.save();
+    const updated = await writeDatabaseSchema(
+      handle,
+      db.id,
+      normalizeSchema(db.propertiesSchema),
+    );
+    if (!updated) {
+      res.status(404).json({ error: 'Database not found' });
+      return;
+    }
 
-    res.status(201).json({ database: serializeDatabase(db) });
+    res.status(201).json({ database: serializeDatabase(updated) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to add property');
@@ -833,11 +821,12 @@ router.patch(
   async (req: Request, res: Response) => {
     try {
       const params = z
-        .object({ id: objectIdSchema, propertyId: z.string().min(1) })
+        .object({ id: entityIdSchema, propertyId: z.string().min(1) })
         .parse(req.params);
       const body = updatePropertySchema.parse(req.body);
 
-      const db = await Database.findById(params.id);
+      const handle = getDb();
+      const db = await findDatabaseById(handle, params.id);
       if (!db) {
         res.status(404).json({ error: 'Database not found' });
         return;
@@ -863,11 +852,17 @@ router.patch(
             : current.config,
       };
       db.propertiesSchema.properties[idx] = next;
-      db.propertiesSchema = normalizeSchema(db.propertiesSchema);
-      db.markModified('propertiesSchema');
-      await db.save();
+      const updated = await writeDatabaseSchema(
+        handle,
+        db.id,
+        normalizeSchema(db.propertiesSchema),
+      );
+      if (!updated) {
+        res.status(404).json({ error: 'Database not found' });
+        return;
+      }
 
-      res.json({ database: serializeDatabase(db) });
+      res.json({ database: serializeDatabase(updated) });
     } catch (error: unknown) {
       if (handleZodError(error, res)) return;
       log.general.error({ err: error }, 'Failed to update property');
@@ -881,10 +876,11 @@ router.delete(
   async (req: Request, res: Response) => {
     try {
       const params = z
-        .object({ id: objectIdSchema, propertyId: z.string().min(1) })
+        .object({ id: entityIdSchema, propertyId: z.string().min(1) })
         .parse(req.params);
 
-      const db = await Database.findById(params.id);
+      const handle = getDb();
+      const db = await findDatabaseById(handle, params.id);
       if (!db) {
         res.status(404).json({ error: 'Database not found' });
         return;
@@ -896,19 +892,28 @@ router.delete(
         res.status(400).json({ error: 'Cannot delete the Name property' });
         return;
       }
-      db.propertiesSchema.properties = db.propertiesSchema.properties.filter(
-        (p) => p.id !== params.propertyId,
-      );
-      db.markModified('propertiesSchema');
-      await db.save();
+      const propertiesSchema: DatabaseSchema = {
+        properties: db.propertiesSchema.properties.filter(
+          (p) => p.id !== params.propertyId,
+        ),
+      };
 
-      // Drop the property from every row.
-      await Page.updateMany(
-        { databaseId: db._id },
-        { $unset: { [`properties.${params.propertyId}`]: '' } },
-      );
+      // Dropping the property from the schema and from every row is one
+      // logical write: the schema is what tells a reader the key exists, so a
+      // failure between the two leaves values no reader can reach and no
+      // writer will overwrite.
+      const updated = await handle.transaction(async (tx) => {
+        const row = await writeDatabaseSchema(tx, db.id, propertiesSchema);
+        if (!row) return null;
+        await removePropertyFromDatabaseRows(tx, db.id, params.propertyId);
+        return row;
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'Database not found' });
+        return;
+      }
 
-      res.json({ database: serializeDatabase(db) });
+      res.json({ database: serializeDatabase(updated) });
     } catch (error: unknown) {
       if (handleZodError(error, res)) return;
       log.general.error({ err: error }, 'Failed to delete property');
@@ -923,10 +928,11 @@ router.delete(
 
 router.get('/:id/rows', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const query = listRowsQuerySchema.parse(req.query);
 
-    const db = await Database.findById(params.id).lean<SerializableDatabase | null>();
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -935,28 +941,21 @@ router.get('/:id/rows', async (req: Request, res: Response) => {
     if (!ok) return;
 
     // Find the view (or fall back to default if none given).
-    let view: SerializableView | null = null;
+    let view: DatabaseViewRecord | null = null;
     if (query.viewId) {
-      view = await DatabaseView.findById(query.viewId).lean<SerializableView | null>();
-      if (!view || String(view.databaseId) !== String(db._id)) {
+      view = await findViewById(handle, query.viewId, db.id);
+      if (!view) {
         res.status(404).json({ error: 'View not found' });
         return;
       }
     } else {
-      view = await DatabaseView.findOne({
-        databaseId: db._id,
-        isDefault: true,
-      }).lean<SerializableView | null>();
+      view = await findDefaultView(handle, db.id);
     }
 
     // Load all rows for the database. Filter / sort in JS — Phase 4 keeps
     // the typed property layer simple and database sizes are bounded by
     // the soft cap (10k rows in Phase 5 is the design target).
-    const rowDocs = await Page.find({
-      databaseId: db._id,
-      archived: false,
-    })
-      .lean<SerializableRow[]>();
+    const rowDocs = await listDatabaseRows(handle, db.id, { archived: false });
 
     const propertyById = new Map<string, DatabaseProperty>();
     for (const p of db.propertiesSchema.properties) propertyById.set(p.id, p);
@@ -976,15 +975,13 @@ router.get('/:id/rows', async (req: Request, res: Response) => {
       filtered = [...filtered].sort(compare);
     } else {
       filtered = [...filtered].sort(
-        (a, b) =>
-          new Date(a.createdAt as unknown as string).getTime() -
-          new Date(b.createdAt as unknown as string).getTime(),
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
       );
     }
 
     const pageSize = Math.min(
       500,
-      Math.max(1, Number(query.pageSize ?? view?.pageSize ?? 50)),
+      Math.max(1, Number(query.pageSize ?? view?.pageSize ?? DEFAULT_VIEW_PAGE_SIZE)),
     );
     const cursorOffset = Number(query.cursor ?? '0');
     const slice = filtered.slice(cursorOffset, cursorOffset + pageSize);
@@ -996,6 +993,7 @@ router.get('/:id/rows', async (req: Request, res: Response) => {
     const serializedRows = await Promise.all(
       slice.map(async (row) => {
         const derived = await resolveDerivedProperties(
+          handle,
           row,
           db.propertiesSchema,
         );
@@ -1018,10 +1016,11 @@ router.get('/:id/rows', async (req: Request, res: Response) => {
 
 router.post('/:id/rows', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = createRowSchema.parse(req.body);
 
-    const db = await Database.findById(params.id).lean<SerializableDatabase | null>();
+    const handle = getDb();
+    const db = await findDatabaseById(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -1048,13 +1047,9 @@ router.post('/:id/rows', async (req: Request, res: Response) => {
           ? nameFromProperty
           : '';
 
-    const last = await Page.findOne({ databaseId: db._id })
-      .sort({ order: -1 })
-      .select('order')
-      .lean();
-    const nextOrder = last ? last.order + 1 : 0;
+    const nextOrder = await nextDatabaseRowOrder(handle, db.id);
 
-    const row = await Page.create({
+    const row = await createPage(handle, {
       workspaceId: db.workspaceId,
       parentId: null,
       title,
@@ -1063,28 +1058,17 @@ router.post('/:id/rows', async (req: Request, res: Response) => {
       ownerId: userId,
       archived: false,
       order: nextOrder,
-      databaseId: db._id,
-      properties: new Map(Object.entries(stored)),
+      databaseId: db.id,
+      properties: stored,
     });
 
-    const lean: SerializableRow = {
-      _id: row._id as mongoose.Types.ObjectId,
-      workspaceId: row.workspaceId,
-      parentId: row.parentId,
-      title: row.title,
-      icon: row.icon,
-      cover: row.cover,
-      ownerId: row.ownerId,
-      archived: row.archived,
-      order: row.order,
-      databaseId: row.databaseId,
-      properties: row.properties,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-    const derived = await resolveDerivedProperties(lean, db.propertiesSchema);
+    const derived = await resolveDerivedProperties(
+      handle,
+      row,
+      db.propertiesSchema,
+    );
 
-    res.status(201).json({ row: serializeRow(lean, { derived }) });
+    res.status(201).json({ row: serializeRow(row, { derived }) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to create row');
@@ -1098,8 +1082,9 @@ router.post('/:id/rows', async (req: Request, res: Response) => {
 
 router.get('/:id/views', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
-    const db = await Database.findById(params.id).select('workspaceId').lean();
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
+    const handle = getDb();
+    const db = await findDatabaseWorkspaceId(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -1107,9 +1092,7 @@ router.get('/:id/views', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
     if (!ok) return;
 
-    const views = await DatabaseView.find({ databaseId: db._id })
-      .sort({ order: 1, createdAt: 1 })
-      .lean<SerializableView[]>();
+    const views = await listViewsByDatabase(handle, db.id);
     res.json({ views: views.map((v) => serializeView(v)) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
@@ -1120,10 +1103,11 @@ router.get('/:id/views', async (req: Request, res: Response) => {
 
 router.post('/:id/views', async (req: Request, res: Response) => {
   try {
-    const params = z.object({ id: objectIdSchema }).parse(req.params);
+    const params = z.object({ id: entityIdSchema }).parse(req.params);
     const body = createViewSchema.parse(req.body);
 
-    const db = await Database.findById(params.id).select('workspaceId').lean();
+    const handle = getDb();
+    const db = await findDatabaseWorkspaceId(handle, params.id);
     if (!db) {
       res.status(404).json({ error: 'Database not found' });
       return;
@@ -1131,12 +1115,8 @@ router.post('/:id/views', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
     if (!ok) return;
 
-    const last = await DatabaseView.findOne({ databaseId: db._id })
-      .sort({ order: -1 })
-      .select('order')
-      .lean();
-    const nextOrder =
-      body.order ?? (last ? last.order + 1 : 0);
+    // `??`, not `||`: `order: 0` is a legitimate explicit order.
+    const nextOrder = body.order ?? (await nextViewOrder(handle, db.id));
 
     // Convert nullable groupBy { propertyId } into the storage shape.
     const groupByValue: { propertyId: string } | null =
@@ -1146,22 +1126,17 @@ router.post('/:id/views', async (req: Request, res: Response) => {
           ? null
           : { propertyId: body.groupBy.propertyId };
 
-    const view = await DatabaseView.create({
-      databaseId: db._id,
+    const view = await insertDatabaseView(handle, {
+      databaseId: db.id,
       name: body.name,
       type: body.type,
       isDefault: body.isDefault ?? false,
-      filters:
-        body.filters ?? ({
-          kind: 'group',
-          combinator: 'and',
-          filters: [],
-        } satisfies FilterGroup),
+      filters: body.filters ?? EMPTY_FILTER_GROUP,
       sorts: (body.sorts ?? []) as ViewSort[],
       groupBy: groupByValue,
       hiddenProperties: body.hiddenProperties ?? [],
       frozenProperties: body.frozenProperties ?? [],
-      pageSize: body.pageSize ?? 50,
+      pageSize: body.pageSize ?? DEFAULT_VIEW_PAGE_SIZE,
       config: (body.config ?? {}) as ViewConfig,
       order: nextOrder,
     });
@@ -1179,11 +1154,12 @@ router.patch(
   async (req: Request, res: Response) => {
     try {
       const params = z
-        .object({ id: objectIdSchema, viewId: objectIdSchema })
+        .object({ id: entityIdSchema, viewId: entityIdSchema })
         .parse(req.params);
       const body = updateViewSchema.parse(req.body);
 
-      const db = await Database.findById(params.id).select('workspaceId').lean();
+      const handle = getDb();
+      const db = await findDatabaseWorkspaceId(handle, params.id);
       if (!db) {
         res.status(404).json({ error: 'Database not found' });
         return;
@@ -1191,48 +1167,44 @@ router.patch(
       const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
       if (!ok) return;
 
-      const view = await DatabaseView.findById(params.viewId);
-      if (!view || String(view.databaseId) !== String(db._id)) {
+      const view = await findViewById(handle, params.viewId, db.id);
+      if (!view) {
         res.status(404).json({ error: 'View not found' });
         return;
       }
 
-      if (body.name !== undefined) view.name = body.name;
-      if (body.type !== undefined) view.type = body.type;
-      if (body.isDefault !== undefined) {
-        view.isDefault = body.isDefault;
+      // Promoting a view and demoting the previous default(s) commit
+      // together — Mongo demoted first and saved the target afterwards, so a
+      // failure between the two left the database with no default at all.
+      const updated = await handle.transaction(async (tx) => {
         if (body.isDefault) {
-          // Demote previous default(s).
-          await DatabaseView.updateMany(
-            {
-              databaseId: db._id,
-              _id: { $ne: view._id },
-              isDefault: true,
-            },
-            { $set: { isDefault: false } },
-          );
+          await demoteOtherDefaultViews(tx, db.id, view.id);
         }
+        return updateDatabaseView(tx, view.id, {
+          name: body.name,
+          type: body.type,
+          isDefault: body.isDefault,
+          filters: body.filters,
+          sorts: body.sorts as ViewSort[] | undefined,
+          groupBy:
+            body.groupBy === undefined
+              ? undefined
+              : body.groupBy === null
+                ? null
+                : { propertyId: body.groupBy.propertyId },
+          hiddenProperties: body.hiddenProperties,
+          frozenProperties: body.frozenProperties,
+          pageSize: body.pageSize,
+          config: body.config as ViewConfig | undefined,
+          order: body.order,
+        });
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'View not found' });
+        return;
       }
-      if (body.filters !== undefined) view.filters = body.filters;
-      if (body.sorts !== undefined) view.sorts = body.sorts as ViewSort[];
-      if (body.groupBy !== undefined) {
-        view.groupBy =
-          body.groupBy === null
-            ? null
-            : { propertyId: body.groupBy.propertyId };
-      }
-      if (body.hiddenProperties !== undefined) {
-        view.hiddenProperties = body.hiddenProperties;
-      }
-      if (body.frozenProperties !== undefined) {
-        view.frozenProperties = body.frozenProperties;
-      }
-      if (body.pageSize !== undefined) view.pageSize = body.pageSize;
-      if (body.config !== undefined) view.config = body.config as ViewConfig;
-      if (body.order !== undefined) view.order = body.order;
 
-      await view.save();
-      res.json({ view: serializeView(view) });
+      res.json({ view: serializeView(updated) });
     } catch (error: unknown) {
       if (handleZodError(error, res)) return;
       log.general.error({ err: error }, 'Failed to update view');
@@ -1246,10 +1218,11 @@ router.delete(
   async (req: Request, res: Response) => {
     try {
       const params = z
-        .object({ id: objectIdSchema, viewId: objectIdSchema })
+        .object({ id: entityIdSchema, viewId: entityIdSchema })
         .parse(req.params);
 
-      const db = await Database.findById(params.id).select('workspaceId').lean();
+      const handle = getDb();
+      const db = await findDatabaseWorkspaceId(handle, params.id);
       if (!db) {
         res.status(404).json({ error: 'Database not found' });
         return;
@@ -1257,29 +1230,30 @@ router.delete(
       const ok = await checkWorkspaceMembership(req, res, db.workspaceId);
       if (!ok) return;
 
-      const view = await DatabaseView.findById(params.viewId);
-      if (!view || String(view.databaseId) !== String(db._id)) {
+      const view = await findViewById(handle, params.viewId, db.id);
+      if (!view) {
         res.status(404).json({ error: 'View not found' });
         return;
       }
 
       // Don't allow deleting the last view — promote another to default
       // if we're removing the default.
-      const total = await DatabaseView.countDocuments({ databaseId: db._id });
+      const total = await countViews(handle, db.id);
       if (total <= 1) {
         res.status(400).json({ error: 'Cannot delete the last view' });
         return;
       }
-      const wasDefault = view.isDefault;
-      await DatabaseView.deleteOne({ _id: view._id });
-      if (wasDefault) {
-        const fallback = await DatabaseView.findOne({ databaseId: db._id })
-          .sort({ order: 1, createdAt: 1 });
+      // The delete and the promotion commit together: between them the
+      // database has no default view, and `GET /:id/rows` resolves its view
+      // from exactly that flag.
+      await handle.transaction(async (tx) => {
+        await deleteDatabaseView(tx, view.id);
+        if (!view.isDefault) return;
+        const fallback = await findFirstViewByOrder(tx, db.id);
         if (fallback) {
-          fallback.isDefault = true;
-          await fallback.save();
+          await updateDatabaseView(tx, fallback.id, { isDefault: true });
         }
-      }
+      });
       res.json({ success: true });
     } catch (error: unknown) {
       if (handleZodError(error, res)) return;

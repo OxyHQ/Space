@@ -1,5 +1,6 @@
+import { isLiveEntityId } from '@oxyhq/db';
 import { z } from 'zod';
-import type { DatabasePropertyType } from '../../models/database.js';
+import type { DatabasePropertyType } from '../../db/schema/databases.js';
 
 /**
  * Validates and normalizes a per-property value payload against its
@@ -33,8 +34,18 @@ const checkboxValueSchema = z.object({ checked: z.boolean() });
 const urlValueSchema = z.object({ value: z.string().max(2000) });
 const emailValueSchema = z.object({ value: z.string().max(320) });
 const phoneValueSchema = z.object({ value: z.string().max(64) });
+/**
+ * A relation names other rows by page id, so the element validator has to
+ * accept every id shape a page can have: a uuid v7 for rows created on
+ * Postgres, and a 24-char ObjectId hex for rows a backfill copied over.
+ *
+ * This used to be a bare `/^[0-9a-fA-F]{24}$/`. Left alone it would have
+ * rejected the whole write with a 400 the moment a client referenced a row
+ * created after the cutover — not just here, but on `PATCH /api/pages/:id`,
+ * which parses row property writes through the same function.
+ */
 const relationValueSchema = z.object({
-  pageIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/u)),
+  pageIds: z.array(z.string().refine(isLiveEntityId, 'Invalid page id')),
 });
 
 export type ParsedPropertyValue =
