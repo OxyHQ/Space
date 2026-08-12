@@ -2,12 +2,18 @@ import * as esbuild from 'esbuild';
 import { cp } from 'fs/promises';
 
 await esbuild.build({
-  entryPoints: ['src/index.ts'],
+  // The migrator is a SECOND entry point, not part of the server bundle: the
+  // deploy runs it as its own process, and `drizzle-kit migrate` is not an
+  // option because drizzle-kit is a devDependency and the production image
+  // installs with --production. Without this line `dist/` has no migrator at
+  // all, which a passing build says nothing about.
+  entryPoints: ['src/index.ts', 'src/db/migrate.ts'],
   bundle: true,
   platform: 'node',
   target: 'node20',
   format: 'esm',
-  outfile: 'dist/index.js',
+  outdir: 'dist',
+  outbase: 'src',
   // Keep node_modules external except @oxyhq/* (their ESM builds have broken imports)
   plugins: [{
     name: 'externalize-except-oxyhq',
@@ -33,5 +39,13 @@ try {
 } catch (error) {
   console.error('⚠️ Failed to copy prompts:', error);
 }
+
+// The generated SQL. `src/db/migrate.ts` resolves this folder relative to its
+// own module URL and throws when no journal is there, so a build that silently
+// skipped this step fails loudly at migrate time instead of reporting a clean
+// run over zero migrations. Deliberately NOT wrapped in try/catch: a build that
+// cannot ship the migrations must fail, not warn.
+await cp('src/drizzle', 'dist/drizzle', { recursive: true });
+console.log('✅ Copied drizzle migrations to dist/');
 
 console.log('✅ Build complete');

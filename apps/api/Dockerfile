@@ -1,5 +1,5 @@
 # ============================================
-# Alia API - Production Dockerfile
+# Oxy Station API - Production Dockerfile
 # ============================================
 # Multi-stage build: Bun for installs, Node for runtime
 
@@ -25,7 +25,7 @@ RUN bun install --frozen-lockfile
 COPY apps/api/ ./apps/api/
 
 # Build the API
-RUN bun run --filter @alia/api build
+RUN bun run --filter @oxystation/api build
 
 # --- Stage 2: Production Runtime ---
 FROM node:22-bookworm-slim AS runtime
