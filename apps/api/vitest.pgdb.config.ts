@@ -1,20 +1,27 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * The runner for `*.pgdb.test.ts` — the suites that talk to a real Postgres.
+ * The real-database run: `bun run test:pgdb`.
  *
- * A separate config rather than a flag on the default one, so that "which job
- * ran the real-database tests" has a single answer. `STATION_TEST_DATABASE_URL`
- * must name a database whose schema is current; `src/db/__tests__/testDatabase.ts`
- * refuses to invent one.
+ * `fileParallelism: false` is load-bearing, not tidiness. Every `*.pgdb.test.ts`
+ * shares one database, and the schema is applied by whichever worker first sees
+ * a fingerprint it does not recognise — which DROPS the tables. Under parallel
+ * workers the first run after any schema edit can drop them out from under a
+ * sibling file that has already seeded its rows, which surfaces as a failure in
+ * a file that has nothing to do with the change. Measured: mutating one CHECK
+ * turned a 1-failure run into a file that reported no tests at all, and the same
+ * mutation under this config fails exactly the one assertion it should.
+ *
+ * Running the files in one worker also means the module-level "schema applied"
+ * promise in `src/db/__tests__/testDatabase.ts` is shared, so the schema is
+ * applied exactly once per run.
  */
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     include: ['src/**/*.pgdb.test.ts'],
-    // These files share one database and scope their writes to owned ids; the
-    // expiry sweep is the exception and says so at its own assertions.
+    fileParallelism: false,
     testTimeout: 30000,
   },
 });
