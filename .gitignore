@@ -76,3 +76,6 @@ apps/mobile/.expo/
 apps/mobile/dist/
 Perplexity.html
 Perplexity_files/
+
+# Built API output
+apps/api/dist/
