@@ -4,6 +4,12 @@ on:
   push:
     branches: [master]
 
+env:
+  # Named once. The rename from `oxyspace` is what made the bootstrap step
+  # below necessary: `wrangler pages deploy` does NOT create a missing project,
+  # it fails with `Project not found [code: 8000007]` after a successful build.
+  CF_PAGES_PROJECT: oxystation
+
 jobs:
   deploy-frontend:
     name: Deploy Frontend to Cloudflare Pages
@@ -21,9 +27,52 @@ jobs:
       - name: Build web
         run: cd apps/app && bunx expo export --platform web
 
+      # Idempotent, and deliberately not `|| true`: a 200 means the project is
+      # there and this is a no-op, a 404 means create it, and ANY other status
+      # fails the job rather than being read as "missing". Swallowing the error
+      # would turn an expired token into a spurious create attempt and then into
+      # a deploy failure two steps later, blamed on the wrong thing.
+      - name: Ensure the Cloudflare Pages project exists
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects"
+
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            "${api}/${CF_PAGES_PROJECT}")
+
+          case "${status}" in
+            200)
+              echo "Pages project '${CF_PAGES_PROJECT}' already exists."
+              exit 0
+              ;;
+            404)
+              echo "Pages project '${CF_PAGES_PROJECT}' not found — creating it."
+              ;;
+            *)
+              echo "Unexpected HTTP ${status} from the Cloudflare API." >&2
+              echo "Not treating this as 'missing'. Check the token and account id." >&2
+              exit 1
+              ;;
+          esac
+
+          # `--fail-with-body` so a 4xx prints Cloudflare's reason instead of an
+          # empty non-zero exit, and the success flag is asserted separately:
+          # the API answers 200 with "success": false for some rejections.
+          body=$(curl -sS --fail-with-body -X POST "${api}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"${CF_PAGES_PROJECT}\",\"production_branch\":\"master\"}")
+
+          echo "${body}" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0) if d.get("success") else (print(json.dumps(d.get("errors"), indent=2), file=sys.stderr) or sys.exit(1))'
+          echo "Created Pages project '${CF_PAGES_PROJECT}'."
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/app/dist --project-name oxystation --branch master
+          command: pages deploy apps/app/dist --project-name ${{ env.CF_PAGES_PROJECT }} --branch master
