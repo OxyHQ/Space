@@ -5,16 +5,16 @@
  * at line 470) perform against the `CreditPackage` model.
  */
 
-import { asc, eq, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import { asc, eq } from 'drizzle-orm';
+import type { PgHandle } from './handle.js';
 import { creditPackages } from '../db/schema/providers.js';
 
 export type CreditPackageRow = typeof creditPackages.$inferSelect;
 export type NewCreditPackage = typeof creditPackages.$inferInsert;
 
-/** See the note on `clarity-models.ts`'s `matchesSlug` — the `lowercase` setter ported. */
+/** See `clarity-models.ts`'s `matchesSlug` — the `lowercase: true` setter, ported. */
 function matchesSlug(value: string) {
-  return sql`lower(${creditPackages.packageId}) = lower(${value})`;
+  return eq(creditPackages.packageId, value.toLowerCase());
 }
 
 /**
@@ -24,7 +24,7 @@ function matchesSlug(value: string) {
  * `sortOrder` is not unique, so `packageId` breaks the tie.
  */
 export async function listPackages(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { isActive?: boolean } = {},
 ): Promise<CreditPackageRow[]> {
   return db
@@ -36,7 +36,7 @@ export async function listPackages(
 
 /** `routes/credit-packages.ts:48` and `:104`. */
 export async function findBySlug(
-  db: StationDatabase,
+  db: PgHandle,
   packageId: string,
 ): Promise<CreditPackageRow | null> {
   const [row] = await db.select().from(creditPackages).where(matchesSlug(packageId));
@@ -45,16 +45,18 @@ export async function findBySlug(
 
 /** `routes/credit-packages.ts:113`. */
 export async function createPackage(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewCreditPackage,
 ): Promise<CreditPackageRow> {
-  const [row] = await db.insert(creditPackages).values(values).returning();
+  const [row] = await db.insert(creditPackages)
+    .values({ ...values, packageId: values.packageId.toLowerCase() })
+    .returning();
   return row;
 }
 
 /** `routes/credit-packages.ts:166`. `undefined` never reaches the SET clause. */
 export async function patchPackage(
-  db: StationDatabase,
+  db: PgHandle,
   packageId: string,
   patch: Partial<Omit<NewCreditPackage, 'id' | 'packageId' | 'createdAt'>>,
 ): Promise<CreditPackageRow | null> {
@@ -71,7 +73,7 @@ export async function patchPackage(
 
 /** `routes/credit-packages.ts:204`. */
 export async function deletePackage(
-  db: StationDatabase,
+  db: PgHandle,
   packageId: string,
 ): Promise<CreditPackageRow | null> {
   const [row] = await db.delete(creditPackages).where(matchesSlug(packageId)).returning();
@@ -80,13 +82,13 @@ export async function deletePackage(
 
 /** `seed-credit-packages.ts:35` — pure `$setOnInsert`. See `plans.ts`'s `seedPlan` for why. */
 export async function seedPackage(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewCreditPackage,
 ): Promise<boolean> {
   const inserted = await db
     .insert(creditPackages)
-    .values(values)
-    .onConflictDoNothing({ target: sql`lower(${creditPackages.packageId})` })
+    .values({ ...values, packageId: values.packageId.toLowerCase() })
+    .onConflictDoNothing({ target: creditPackages.packageId })
     .returning({ id: creditPackages.id });
   return inserted.length > 0;
 }

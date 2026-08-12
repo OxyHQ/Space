@@ -15,20 +15,9 @@
  * has no caller in the source and the rewiring should not invent one.
  */
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { type PgHandle, requireTransaction } from './handle.js';
 import { clarityModelProviderMappings, clarityModels } from '../db/schema/providers.js';
-
-/**
- * The handle inside `db.transaction(cb)`.
- *
- * Derived from `StationDatabase` rather than imported, so it cannot drift from
- * whatever drizzle version the client is built against. Only
- * {@link replaceProviderMappings} needs it; every other function here takes the
- * pool and works inside a transaction too, because a transaction handle is
- * assignable to `StationDatabase` for the query-builder surface these use.
- */
-type Transaction = Parameters<Parameters<StationDatabase['transaction']>[0]>[0];
 
 export type ClarityModelRow = typeof clarityModels.$inferSelect;
 export type NewClarityModel = typeof clarityModels.$inferInsert;
@@ -45,21 +34,21 @@ export interface ProviderMappingInput {
 }
 
 /**
- * `lower(clarityModelId) = lower($1)`.
+ * The Mongoose `lowercase: true` setter, ported.
  *
- * The Mongoose `lowercase: true` setter normalises on write AND on query
- * values, so `findOne({ clarityModelId: 'Clarity-V1' })` matches the stored
- * `clarity-v1` today. Matching on `lower()` on both sides is what preserves
- * that; the functional unique index makes it an index scan rather than a
- * sequential one.
+ * It normalises on write AND on query values, so
+ * `findOne({ clarityModelId: 'Clarity-V1' })` matches the stored `clarity-v1`
+ * today. Normalising the PARAMETER reproduces the query half; the column needs
+ * no `lower()` because a CHECK guarantees every stored value already is its own
+ * `lower()`, which keeps this an index scan on the plain unique.
  */
 function matchesSlug(value: string) {
-  return sql`lower(${clarityModels.clarityModelId}) = lower(${value})`;
+  return eq(clarityModels.clarityModelId, value.toLowerCase());
 }
 
 /** `routes/clarity-models.ts:33` — the admin listing, optionally filtered. */
 export async function listModels(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { tier?: string; isActive?: boolean } = {},
 ): Promise<ClarityModelRow[]> {
   const conditions = [];
@@ -75,7 +64,7 @@ export async function listModels(
 
 /** `routes/clarity-models.ts:58` and `:107`, `seed-model-configs.ts:193`. */
 export async function findBySlug(
-  db: StationDatabase,
+  db: PgHandle,
   clarityModelId: string,
 ): Promise<ClarityModelRow | null> {
   const [row] = await db.select().from(clarityModels).where(matchesSlug(clarityModelId));
@@ -104,24 +93,38 @@ export async function findBySlug(
  * behaviour.
  */
 export async function findExistingSlugs(
-  db: StationDatabase,
+  db: PgHandle,
   slugs: readonly string[],
 ): Promise<string[]> {
   if (slugs.length === 0) return [];
-  const normalised = slugs.map((slug) => slug.toLowerCase());
   const rows = await db
     .select({ clarityModelId: clarityModels.clarityModelId })
     .from(clarityModels)
-    .where(inArray(sql`lower(${clarityModels.clarityModelId})`, normalised));
+    .where(
+      inArray(
+        clarityModels.clarityModelId,
+        slugs.map((slug) => slug.toLowerCase()),
+      ),
+    );
   return rows.map((row) => row.clarityModelId);
 }
 
-/** `routes/clarity-models.ts:139`. */
+/**
+ * `routes/clarity-models.ts:139`.
+ *
+ * The slug is lowercased here rather than trusted from the caller: that is the
+ * WRITE half of the `lowercase: true` setter, and without it a mixed-case
+ * `clarityModelId` violates the table's CHECK. The route happens to lowercase
+ * it too; relying on that would leave every other writer to remember.
+ */
 export async function createModel(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewClarityModel,
 ): Promise<ClarityModelRow> {
-  const [row] = await db.insert(clarityModels).values(values).returning();
+  const [row] = await db
+    .insert(clarityModels)
+    .values({ ...values, clarityModelId: values.clarityModelId.toLowerCase() })
+    .returning();
   return row;
 }
 
@@ -141,7 +144,7 @@ export async function createModel(
  * clears, which is a caller saying so.
  */
 export async function patchModel(
-  db: StationDatabase,
+  db: PgHandle,
   clarityModelId: string,
   patch: Partial<Omit<NewClarityModel, 'id' | 'clarityModelId' | 'createdAt'>>,
 ): Promise<ClarityModelRow | null> {
@@ -158,7 +161,7 @@ export async function patchModel(
 
 /** `routes/clarity-models.ts:251`. Mappings go with it — the child FK cascades. */
 export async function deleteModel(
-  db: StationDatabase,
+  db: PgHandle,
   clarityModelId: string,
 ): Promise<ClarityModelRow | null> {
   const [row] = await db.delete(clarityModels).where(matchesSlug(clarityModelId)).returning();
@@ -167,13 +170,13 @@ export async function deleteModel(
 
 /** `seed-model-configs.ts:193` — the `$setOnInsert` half of the seed's upsert. */
 export async function seedModel(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewClarityModel,
 ): Promise<{ inserted: boolean; id: string }> {
   const [inserted] = await db
     .insert(clarityModels)
-    .values(values)
-    .onConflictDoNothing({ target: sql`lower(${clarityModels.clarityModelId})` })
+    .values({ ...values, clarityModelId: values.clarityModelId.toLowerCase() })
+    .onConflictDoNothing({ target: clarityModels.clarityModelId })
     .returning({ id: clarityModels.id });
 
   if (inserted) return { inserted: true, id: inserted.id };
@@ -187,7 +190,7 @@ export async function seedModel(
 
 /** The mappings of one Clarity model, in the source array's order. */
 export async function listProviderMappings(
-  db: StationDatabase,
+  db: PgHandle,
   clarityModelRowId: string,
 ): Promise<ProviderMappingRow[]> {
   return db
@@ -208,7 +211,7 @@ export async function listProviderMappings(
  * Has no caller in the source — see the note at the top of this file.
  */
 export async function listActiveMappings(
-  db: StationDatabase,
+  db: PgHandle,
   clarityModelRowId: string,
 ): Promise<ProviderMappingRow[]> {
   return db
@@ -253,13 +256,13 @@ export async function listActiveMappings(
  * failures above.
  */
 export async function replaceProviderMappings(
-  tx: Transaction,
+  tx: PgHandle,
   clarityModelRowId: string,
   mappings: readonly ProviderMappingInput[],
 ): Promise<ProviderMappingRow[]> {
-  requireTransaction(tx);
+  const handle = requireTransaction(tx, 'replaceProviderMappings');
 
-  const [locked] = await tx
+  const [locked] = await handle
     .select({ id: clarityModels.id })
     .from(clarityModels)
     .where(eq(clarityModels.id, clarityModelRowId))
@@ -269,13 +272,13 @@ export async function replaceProviderMappings(
     throw new Error(`clarity model ${clarityModelRowId} does not exist`);
   }
 
-  await tx
+  await handle
     .delete(clarityModelProviderMappings)
     .where(eq(clarityModelProviderMappings.clarityModelId, clarityModelRowId));
 
   if (mappings.length === 0) return [];
 
-  return tx
+  return handle
     .insert(clarityModelProviderMappings)
     .values(
       mappings.map((mapping, position) => ({
@@ -290,24 +293,4 @@ export async function replaceProviderMappings(
       })),
     )
     .returning();
-}
-
-/**
- * Refuse a pool handle where a transaction is required.
- *
- * `PgTransaction` carries no runtime brand, so this tests for the one thing a
- * pool has and a transaction does not: `transaction()` on a transaction handle
- * opens a SAVEPOINT and is still callable, but `$client` is present only on the
- * handle `drizzle()` returned. Checking for its ABSENCE is what distinguishes
- * them — a check for the presence of something both have would pass for both
- * and the guard would be a comment.
- */
-function requireTransaction(handle: Transaction): void {
-  if ('$client' in handle) {
-    throw new Error(
-      'replaceProviderMappings requires a transaction handle: replacing a mapping list ' +
-        'is a DELETE followed by an INSERT, and outside a transaction the gap between ' +
-        'them leaves the Clarity model with no providers at all.',
-    );
-  }
 }

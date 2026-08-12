@@ -26,7 +26,7 @@
 
 import { createHash } from 'node:crypto';
 import { and, asc, count, eq, gt, isNotNull, or, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { providerKeys } from '../db/schema/providers.js';
 
 /**
@@ -116,7 +116,7 @@ export function providerKeyPrefix(key: string): string {
  * the kind of arbitrariness that must not be ported as-is.
  */
 export async function listSelectableKeys(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
 ): Promise<ProviderKeyRow[]> {
   return db
@@ -146,7 +146,7 @@ export async function listSelectableKeys(
  * — then by `id`.
  */
 export async function listKeys(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { provider?: string; environment?: string; isActive?: boolean } = {},
 ) {
   const conditions = [];
@@ -171,7 +171,7 @@ export async function listKeys(
  * route does not either — the shape it builds carries `hasKeyValue` and
  * `keyLength` only.
  */
-export async function listKeysForDiagnostics(db: StationDatabase) {
+export async function listKeysForDiagnostics(db: PgHandle) {
   return db
     .select({
       id: providerKeys.id,
@@ -195,7 +195,7 @@ export async function listKeysForDiagnostics(db: StationDatabase) {
 
 /** `key-manager.ts:420` — every non-archived key for a provider, for the stats roll-up. */
 export async function listKeysForProvider(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
 ): Promise<ProviderKeyRow[]> {
   return db
@@ -205,7 +205,7 @@ export async function listKeysForProvider(
 }
 
 /** `routes/keys.ts:180` — one key, without the secret or its digest. */
-export async function findPublicById(db: StationDatabase, id: string) {
+export async function findPublicById(db: PgHandle, id: string) {
   const [row] = await db.select(PUBLIC_COLUMNS).from(providerKeys).where(eq(providerKeys.id, id));
   return row ?? null;
 }
@@ -216,7 +216,7 @@ export async function findPublicById(db: StationDatabase, id: string) {
  * Separate from {@link findPublicById} so that returning the secret is always a
  * choice someone made by naming this function, never the default.
  */
-export async function findById(db: StationDatabase, id: string): Promise<ProviderKeyRow | null> {
+export async function findById(db: PgHandle, id: string): Promise<ProviderKeyRow | null> {
   const [row] = await db.select().from(providerKeys).where(eq(providerKeys.id, id));
   return row ?? null;
 }
@@ -231,7 +231,7 @@ export async function findById(db: StationDatabase, id: string): Promise<Provide
  * would reject it with a 500. Pinned by test.
  */
 export async function findByKeyHash(
-  db: StationDatabase,
+  db: PgHandle,
   keyHash: string,
 ): Promise<ProviderKeyRow | null> {
   const [row] = await db.select().from(providerKeys).where(eq(providerKeys.keyHash, keyHash));
@@ -240,7 +240,7 @@ export async function findByKeyHash(
 
 /** `routes/keys.ts:281`. */
 export async function createKey(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewProviderKey,
 ): Promise<ProviderKeyRow> {
   const [row] = await db.insert(providerKeys).values(values).returning();
@@ -294,7 +294,7 @@ export interface ProviderKeyPatch {
  * A patch with no defined keys returns the row unchanged instead of reaching
  * drizzle, which throws `No values to set` on an empty object.
  */
-export async function patchKey(db: StationDatabase, id: string, patch: ProviderKeyPatch) {
+export async function patchKey(db: PgHandle, id: string, patch: ProviderKeyPatch) {
   if (Object.values(patch).every((value) => value === undefined)) {
     return findPublicById(db, id);
   }
@@ -307,7 +307,7 @@ export async function patchKey(db: StationDatabase, id: string, patch: ProviderK
 }
 
 /** `routes/keys.ts:387` — returns the deleted row so the caller can 404 and invalidate its cache. */
-export async function deleteKey(db: StationDatabase, id: string): Promise<ProviderKeyRow | null> {
+export async function deleteKey(db: PgHandle, id: string): Promise<ProviderKeyRow | null> {
   const [row] = await db.delete(providerKeys).where(eq(providerKeys.id, id)).returning();
   return row ?? null;
 }
@@ -320,7 +320,7 @@ export async function deleteKey(db: StationDatabase, id: string): Promise<Provid
  * key and there is no state in which some of them should have landed.
  */
 export async function rotateKey(
-  db: StationDatabase,
+  db: PgHandle,
   id: string,
   newKey: string,
   rotatedAt: Date = new Date(),
@@ -351,7 +351,7 @@ export async function rotateKey(
  * Both call sites report the number to an operator, so a silent inflation would
  * have been invisible.
  */
-export async function resetCooldowns(db: StationDatabase): Promise<number> {
+export async function resetCooldowns(db: PgHandle): Promise<number> {
   const result = await db
     .update(providerKeys)
     .set({ cooldownUntil: null, consecutiveFailures: 0 })
@@ -360,7 +360,7 @@ export async function resetCooldowns(db: StationDatabase): Promise<number> {
 }
 
 /** `routes/keys.ts:55` — active, non-archived key count for the config hash. */
-export async function countActiveKeys(db: StationDatabase): Promise<number> {
+export async function countActiveKeys(db: PgHandle): Promise<number> {
   const [row] = await db
     .select({ value: count() })
     .from(providerKeys)
@@ -384,7 +384,7 @@ export async function countActiveKeys(db: StationDatabase): Promise<number> {
  * asserted directly in the tests rather than reasoned about here.
  */
 export async function maxPriorityInGroup(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   isPaid: boolean,
 ): Promise<number | null> {
@@ -411,7 +411,7 @@ export async function maxPriorityInGroup(
  * structural, not a new one.
  */
 export async function recordUsage(
-  db: StationDatabase,
+  db: PgHandle,
   id: string,
   tokens: number,
   usedAt: Date = new Date(),
@@ -440,7 +440,7 @@ export async function recordUsage(
  * expressions here reproduce them exactly.
  */
 export async function recordSuccess(
-  db: StationDatabase,
+  db: PgHandle,
   id: string,
   succeededAt: Date = new Date(),
 ): Promise<ProviderKeyRow | null> {
@@ -474,7 +474,7 @@ export async function recordSuccess(
  * `archivedReason` quotes the total AFTER the increment.
  */
 export async function recordFailure(
-  db: StationDatabase,
+  db: PgHandle,
   id: string,
   reason: string,
   maxPriority: number,
@@ -487,6 +487,11 @@ export async function recordFailure(
   const newTotalFailures = sql`${providerKeys.totalFailures} + ${increment}`;
   const shouldArchive = sql`${newTotalFailures} >= ${providerKeys.maxTotalFailures}`;
 
+  // `failedAt` is bound as an ISO string with an explicit cast wherever it goes
+  // inside a `sql` template. A bare `Date` there has no column to take its
+  // encoder from and fails in the DRIVER, before the server sees it. The plain
+  // `lastFailureAt: failedAt` below is fine for the opposite reason: drizzle
+  // knows the column.
   const [row] = await db
     .update(providerKeys)
     .set({
@@ -497,7 +502,7 @@ export async function recordFailure(
       currentPriority: maxPriority + 1,
       isArchived: sql`case when ${shouldArchive} then true else ${providerKeys.isArchived} end`,
       isActive: sql`case when ${shouldArchive} then false else ${providerKeys.isActive} end`,
-      archivedAt: sql`case when ${shouldArchive} then ${failedAt} else ${providerKeys.archivedAt} end`,
+      archivedAt: sql`case when ${shouldArchive} then ${failedAt.toISOString()}::timestamptz else ${providerKeys.archivedAt} end`,
       archivedReason: sql`case when ${shouldArchive} then 'Archived after ' || ${newTotalFailures} || ' total failures' else ${providerKeys.archivedReason} end`,
     })
     .where(eq(providerKeys.id, id))
@@ -507,7 +512,7 @@ export async function recordFailure(
 
 /** `key-manager.ts:399` — the exponential/rate-limit cooldown the caller computed. */
 export async function setCooldown(
-  db: StationDatabase,
+  db: PgHandle,
   id: string,
   cooldownUntil: Date | null,
 ): Promise<void> {
@@ -515,7 +520,7 @@ export async function setCooldown(
 }
 
 /** `key-manager.ts:441` — accumulate spend against a key's credit limit. */
-export async function recordSpend(db: StationDatabase, id: string, costUSD: number): Promise<void> {
+export async function recordSpend(db: PgHandle, id: string, costUSD: number): Promise<void> {
   await db
     .update(providerKeys)
     .set({ spentUSD: sql`${providerKeys.spentUSD} + ${costUSD}` })
@@ -536,7 +541,7 @@ export async function recordSpend(db: StationDatabase, id: string, costUSD: numb
  * @returns `true` when a key was marked, `false` when it has no credit limit or
  *   does not exist — the same two outcomes the source's `if` produced.
  */
-export async function markCreditExhausted(db: StationDatabase, id: string): Promise<boolean> {
+export async function markCreditExhausted(db: PgHandle, id: string): Promise<boolean> {
   const result = await db
     .update(providerKeys)
     .set({ spentUSD: sql`${providerKeys.creditLimitUSD}` })
@@ -545,7 +550,7 @@ export async function markCreditExhausted(db: StationDatabase, id: string): Prom
 }
 
 /** `lib/broadcast-helpers.ts:20` — the whole public listing, for the websocket fan-out. */
-export async function listAllPublic(db: StationDatabase) {
+export async function listAllPublic(db: PgHandle) {
   return db
     .select(PUBLIC_COLUMNS)
     .from(providerKeys)
@@ -553,7 +558,7 @@ export async function listAllPublic(db: StationDatabase) {
 }
 
 /** `routes/keys.ts:495` — `POST /:keyId/reset-spend`. */
-export async function resetSpend(db: StationDatabase, id: string) {
+export async function resetSpend(db: PgHandle, id: string) {
   const [row] = await db
     .update(providerKeys)
     .set({ spentUSD: 0 })
@@ -563,7 +568,7 @@ export async function resetSpend(db: StationDatabase, id: string) {
 }
 
 /** `routes/keys.ts:537` and `:579` — `POST /:keyId/deactivate` and `/activate`. */
-export async function setActive(db: StationDatabase, id: string, isActive: boolean) {
+export async function setActive(db: PgHandle, id: string, isActive: boolean) {
   const [row] = await db
     .update(providerKeys)
     .set({ isActive })

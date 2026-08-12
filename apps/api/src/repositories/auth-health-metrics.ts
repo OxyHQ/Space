@@ -4,7 +4,7 @@
  */
 
 import { and, asc, eq, gte, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { authHealthMetrics } from '../db/schema/providers.js';
 
 /** `auth-health.ts:101` truncates to this before storing. */
@@ -37,7 +37,7 @@ export interface AuthHealthSummaryRow {
  * timezone is not the one the source assumed.
  */
 export async function recordSuccess(
-  db: StationDatabase,
+  db: PgHandle,
   method: string,
   hour: Date,
 ): Promise<void> {
@@ -63,7 +63,7 @@ export async function recordSuccess(
  * missing one preserves.
  */
 export async function recordFailure(
-  db: StationDatabase,
+  db: PgHandle,
   method: string,
   hour: Date,
   reason: string | undefined,
@@ -116,7 +116,7 @@ export async function recordFailure(
  * cast, because the caller divides them.
  */
 export async function summaryByMethod(
-  db: StationDatabase,
+  db: PgHandle,
   since: Date,
 ): Promise<AuthHealthSummaryRow[]> {
   const rows = await db
@@ -124,7 +124,20 @@ export async function summaryByMethod(
       method: authHealthMetrics.method,
       totalSuccesses: sql<number>`coalesce(sum(${authHealthMetrics.successes}), 0)::double precision`,
       totalFailures: sql<number>`coalesce(sum(${authHealthMetrics.failures}), 0)::double precision`,
-      lastFailure: sql<Date | null>`max(${authHealthMetrics.lastFailure})`,
+      /**
+       * Epoch MILLISECONDS, not a timestamp, and reassembled into a `Date`
+       * below.
+       *
+       * drizzle's `mode: 'date'` decoding is applied by the RESULT MAPPER from
+       * the COLUMN, so it does not reach a value produced by a `sql`
+       * expression: `max(last_failure)` comes back as the raw string
+       * `2026-08-12 11:47:00.978+00`, typed `Date` by the `sql<Date>`
+       * annotation and never checked at runtime. Measured — the first run of
+       * this file failed on it. `extract(epoch ...)` returns `numeric`, which
+       * postgres.js decodes as a STRING for the same family of reasons, so the
+       * cast to `double precision` is the load-bearing half of this expression.
+       */
+      lastFailureMs: sql<number | null>`(extract(epoch from max(${authHealthMetrics.lastFailure})) * 1000)::double precision`,
       lastFailureReason: sql<string | null>`(
         array_agg(${authHealthMetrics.lastFailureReason} order by ${authHealthMetrics.lastFailure} desc nulls last, ${authHealthMetrics.hour} desc)
       )[1]`,
@@ -142,7 +155,7 @@ export async function summaryByMethod(
       totalSuccesses: row.totalSuccesses,
       totalFailures: row.totalFailures,
       successRate,
-      lastFailure: row.lastFailure,
+      lastFailure: row.lastFailureMs === null ? null : new Date(row.lastFailureMs),
       lastFailureReason: row.lastFailureReason,
       isHealthy: total < MIN_REQUESTS_FOR_HEALTH || successRate >= HEALTHY_SUCCESS_RATE,
     };
@@ -150,7 +163,7 @@ export async function summaryByMethod(
 }
 
 /** One bucket, for a caller that wants to read back what it just wrote. */
-export async function findBucket(db: StationDatabase, method: string, hour: Date) {
+export async function findBucket(db: PgHandle, method: string, hour: Date) {
   const [row] = await db
     .select()
     .from(authHealthMetrics)

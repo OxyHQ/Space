@@ -118,6 +118,14 @@ export type PlanProduct = (typeof PLAN_PRODUCTS)[number];
 export type FeatureType = (typeof FEATURE_TYPES)[number];
 export type ClarityTier = (typeof CLARITY_TIERS)[number];
 
+/**
+ * The Mongo TTL retentions this domain carried, in seconds. Declared beside the
+ * tables they belong to so `db/expiry-targets.ts` cannot drift from the schema,
+ * and asserted against the source models by `providerExpiry.pgdb.test.ts`.
+ */
+export const FALLBACK_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+export const AUTH_HEALTH_METRIC_RETENTION_SECONDS = 7 * 24 * 60 * 60;
+
 /** `maxlength`s that genuinely fire — see the note on `providerKeys.name`. */
 export const KEY_NAME_MAX = 200;
 export const KEY_PREFIX_MAX = 20;

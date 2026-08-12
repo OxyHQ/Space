@@ -7,7 +7,7 @@
  */
 
 import { and, eq, gte, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { apiUsages } from '../db/schema/providers.js';
 
 /** Request and token totals for one rolling window. */
@@ -26,7 +26,7 @@ export interface UsageWindows {
 
 /** `key-manager.ts:308`. */
 export async function recordUsage(
-  db: StationDatabase,
+  db: PgHandle,
   values: {
     keyId: string;
     provider: string;
@@ -69,7 +69,7 @@ export async function recordUsage(
  * `$match` stage.
  */
 export async function usageWindowsForKey(
-  db: StationDatabase,
+  db: PgHandle,
   keyId: string,
   now: Date = new Date(),
 ): Promise<UsageWindows> {

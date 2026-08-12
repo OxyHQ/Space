@@ -23,7 +23,7 @@
  */
 
 import { and, asc, count, desc, eq, gte, inArray, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { fallbackEventAttempts, fallbackEvents } from '../db/schema/providers.js';
 
 /** One attempt within a fallback event, in the order the engine made them. */
@@ -54,7 +54,7 @@ export interface FallbackEventInput {
  * event, because the analytics read it as a shorter fallback chain than the one
  * that actually happened.
  */
-export async function recordEvent(db: StationDatabase, event: FallbackEventInput): Promise<string> {
+export async function recordEvent(db: PgHandle, event: FallbackEventInput): Promise<string> {
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(fallbackEvents)
@@ -95,7 +95,7 @@ export async function recordEvent(db: StationDatabase, event: FallbackEventInput
  * turn "half the requests needed no fallback at all" into "the average chain is
  * longer than it is".
  */
-function eventsWithAttemptCount(db: StationDatabase, since: Date) {
+function eventsWithAttemptCount(db: PgHandle, since: Date) {
   return db.$with('events_with_attempts').as(
     db
       .select({
@@ -125,7 +125,7 @@ function eventsWithAttemptCount(db: StationDatabase, since: Date) {
  * are divided in the caller, so an uncast pair would do string arithmetic and
  * still often produce a believable percentage.
  */
-export async function summary(db: StationDatabase, since: Date) {
+export async function summary(db: PgHandle, since: Date) {
   const scoped = eventsWithAttemptCount(db, since);
 
   const [row] = await db
@@ -151,7 +151,7 @@ export async function summary(db: StationDatabase, since: Date) {
  * different tenth rows. `reason` is a second sort key to make the cut
  * deterministic.
  */
-export async function topFailureReasons(db: StationDatabase, since: Date, limit = 10) {
+export async function topFailureReasons(db: PgHandle, since: Date, limit = 10) {
   return db
     .select({
       reason: fallbackEventAttempts.reason,
@@ -183,7 +183,7 @@ export async function topFailureReasons(db: StationDatabase, since: Date, limit 
  * member — so the join between the two aggregations uses `is not distinct
  * from`, which matches NULL to NULL where `=` would drop that group entirely.
  */
-export async function mostFailedProviders(db: StationDatabase, since: Date, limit = 10) {
+export async function mostFailedProviders(db: PgHandle, since: Date, limit = 10) {
   const scoped = db.$with('scoped_attempts').as(
     db
       .select({
@@ -240,7 +240,7 @@ export async function mostFailedProviders(db: StationDatabase, since: Date, limi
  * it is dead — a group always has at least one member — but reproducing it
  * costs nothing, while removing it would need an argument.
  */
-export async function failuresByModel(db: StationDatabase, since: Date, limit = 20) {
+export async function failuresByModel(db: PgHandle, since: Date, limit = 20) {
   const scoped = eventsWithAttemptCount(db, since);
 
   return db
@@ -273,7 +273,7 @@ export async function failuresByModel(db: StationDatabase, since: Date, limit = 
  *
  * `timestamp desc` alone is not a total order; `id` breaks the ties.
  */
-export async function recentFailures(db: StationDatabase, since: Date, limit = 20) {
+export async function recentFailures(db: PgHandle, since: Date, limit = 20) {
   const events = await db
     .select()
     .from(fallbackEvents)
@@ -307,7 +307,7 @@ export async function recentFailures(db: StationDatabase, since: Date, limit = 2
 }
 
 /** Events in a window. A positive control for every aggregate above. */
-export async function countSince(db: StationDatabase, since: Date): Promise<number> {
+export async function countSince(db: PgHandle, since: Date): Promise<number> {
   const [row] = await db
     .select({ value: count() })
     .from(fallbackEvents)

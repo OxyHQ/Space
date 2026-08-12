@@ -5,7 +5,7 @@
  */
 
 import { and, asc, eq, getTableColumns, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { modelConfigs } from '../db/schema/providers.js';
 
 export type ModelConfigRow = typeof modelConfigs.$inferSelect;
@@ -26,7 +26,7 @@ export type NewModelConfig = typeof modelConfigs.$inferInsert;
  * nobody wants.
  */
 export async function listModels(
-  db: StationDatabase,
+  db: PgHandle,
   filter: {
     provider?: string;
     clarityTier?: string;
@@ -52,7 +52,7 @@ export async function listModels(
 }
 
 /** `routes/models.ts:57` — active, non-deprecated models for one Clarity tier. */
-export async function listByTier(db: StationDatabase, tier: string): Promise<ModelConfigRow[]> {
+export async function listByTier(db: PgHandle, tier: string): Promise<ModelConfigRow[]> {
   return db
     .select()
     .from(modelConfigs)
@@ -76,7 +76,7 @@ export async function listByTier(db: StationDatabase, tier: string): Promise<Mod
  * matching `GPT-4O` to `gpt-4o`.
  */
 export async function findByProviderModel(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
 ): Promise<ModelConfigRow | null> {
@@ -96,7 +96,7 @@ export async function findByProviderModel(
  * change to the route and belongs to the rewiring commit, not here.
  */
 export async function createModel(
-  db: StationDatabase,
+  db: PgHandle,
   values: NewModelConfig,
 ): Promise<ModelConfigRow> {
   const [row] = await db.insert(modelConfigs).values(values).returning();
@@ -105,7 +105,7 @@ export async function createModel(
 
 /** `routes/models.ts:165`. `undefined` never reaches the SET clause. */
 export async function patchModel(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
   patch: Partial<Omit<NewModelConfig, 'id' | 'provider' | 'modelId' | 'createdAt'>>,
@@ -131,7 +131,7 @@ export async function patchModel(
  * rewiring turns that into a 409 rather than a 500.
  */
 export async function deleteModel(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
 ): Promise<ModelConfigRow | null> {
@@ -164,7 +164,7 @@ export async function deleteModel(
  *   statement.
  */
 export async function seedModel(
-  db: StationDatabase,
+  db: PgHandle,
   onInsert: NewModelConfig,
   always: Required<Pick<NewModelConfig, 'clarityTier' | 'priority' | 'qualityScore'>>,
 ): Promise<{ inserted: boolean; row: ModelConfigRow }> {

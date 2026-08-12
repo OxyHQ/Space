@@ -9,16 +9,16 @@
  * {@link listPlans} and {@link patchPlan}.
  */
 
-import { and, asc, eq, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import { and, asc, eq } from 'drizzle-orm';
+import type { PgHandle } from './handle.js';
 import { plans } from '../db/schema/providers.js';
 
 export type PlanRow = typeof plans.$inferSelect;
 export type NewPlan = typeof plans.$inferInsert;
 
-/** See the note on `clarity-models.ts`'s `matchesSlug` — the `lowercase` setter ported. */
+/** See `clarity-models.ts`'s `matchesSlug` — the `lowercase: true` setter, ported. */
 function matchesSlug(value: string) {
-  return sql`lower(${plans.planId}) = lower(${value})`;
+  return eq(plans.planId, value.toLowerCase());
 }
 
 /**
@@ -28,7 +28,7 @@ function matchesSlug(value: string) {
  * `sortOrder` is not unique within a product, so `planId` breaks the tie.
  */
 export async function listPlans(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { product?: string; isActive?: boolean } = {},
 ): Promise<PlanRow[]> {
   const conditions = [];
@@ -43,14 +43,16 @@ export async function listPlans(
 }
 
 /** `routes/plans.ts:50` and `:108`. */
-export async function findBySlug(db: StationDatabase, planId: string): Promise<PlanRow | null> {
+export async function findBySlug(db: PgHandle, planId: string): Promise<PlanRow | null> {
   const [row] = await db.select().from(plans).where(matchesSlug(planId));
   return row ?? null;
 }
 
 /** `routes/plans.ts:130`. */
-export async function createPlan(db: StationDatabase, values: NewPlan): Promise<PlanRow> {
-  const [row] = await db.insert(plans).values(values).returning();
+export async function createPlan(db: PgHandle, values: NewPlan): Promise<PlanRow> {
+  const [row] = await db.insert(plans)
+    .values({ ...values, planId: values.planId.toLowerCase() })
+    .returning();
   return row;
 }
 
@@ -62,7 +64,7 @@ export async function createPlan(db: StationDatabase, values: NewPlan): Promise<
  * the SET clause, which is what keeps that from blanking the other seventeen.
  */
 export async function patchPlan(
-  db: StationDatabase,
+  db: PgHandle,
   planId: string,
   patch: Partial<Omit<NewPlan, 'id' | 'planId' | 'createdAt'>>,
 ): Promise<PlanRow | null> {
@@ -74,7 +76,7 @@ export async function patchPlan(
 }
 
 /** `routes/plans.ts:238`. */
-export async function deletePlan(db: StationDatabase, planId: string): Promise<PlanRow | null> {
+export async function deletePlan(db: PgHandle, planId: string): Promise<PlanRow | null> {
   const [row] = await db.delete(plans).where(matchesSlug(planId)).returning();
   return row ?? null;
 }
@@ -89,11 +91,11 @@ export async function deletePlan(db: StationDatabase, planId: string): Promise<P
  * With `DO NOTHING RETURNING`, an empty result IS the answer and a real failure
  * still propagates.
  */
-export async function seedPlan(db: StationDatabase, values: NewPlan): Promise<boolean> {
+export async function seedPlan(db: PgHandle, values: NewPlan): Promise<boolean> {
   const inserted = await db
     .insert(plans)
-    .values(values)
-    .onConflictDoNothing({ target: sql`lower(${plans.planId})` })
+    .values({ ...values, planId: values.planId.toLowerCase() })
+    .onConflictDoNothing({ target: plans.planId })
     .returning({ id: plans.id });
   return inserted.length > 0;
 }

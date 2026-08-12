@@ -5,16 +5,16 @@
  * (via `await import` at line 480) perform against the `Feature` model.
  */
 
-import { and, asc, eq, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import { and, asc, eq } from 'drizzle-orm';
+import type { PgHandle } from './handle.js';
 import { features } from '../db/schema/providers.js';
 
 export type FeatureRow = typeof features.$inferSelect;
 export type NewFeature = typeof features.$inferInsert;
 
-/** See the note on `clarity-models.ts`'s `matchesSlug` — the `lowercase` setter ported. */
+/** See `clarity-models.ts`'s `matchesSlug` — the `lowercase: true` setter, ported. */
 function matchesSlug(value: string) {
-  return sql`lower(${features.featureId}) = lower(${value})`;
+  return eq(features.featureId, value.toLowerCase());
 }
 
 /**
@@ -24,7 +24,7 @@ function matchesSlug(value: string) {
  * `sortOrder` is not unique within a category, so `featureId` breaks the tie.
  */
 export async function listFeatures(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { category?: string; isActive?: boolean } = {},
 ): Promise<FeatureRow[]> {
   const conditions = [];
@@ -40,7 +40,7 @@ export async function listFeatures(
 
 /** `routes/features.ts:36` and `:61`. */
 export async function findBySlug(
-  db: StationDatabase,
+  db: PgHandle,
   featureId: string,
 ): Promise<FeatureRow | null> {
   const [row] = await db.select().from(features).where(matchesSlug(featureId));
@@ -48,14 +48,16 @@ export async function findBySlug(
 }
 
 /** `routes/features.ts:66`. */
-export async function createFeature(db: StationDatabase, values: NewFeature): Promise<FeatureRow> {
-  const [row] = await db.insert(features).values(values).returning();
+export async function createFeature(db: PgHandle, values: NewFeature): Promise<FeatureRow> {
+  const [row] = await db.insert(features)
+    .values({ ...values, featureId: values.featureId.toLowerCase() })
+    .returning();
   return row;
 }
 
 /** `routes/features.ts:94`. `undefined` never reaches the SET clause. */
 export async function patchFeature(
-  db: StationDatabase,
+  db: PgHandle,
   featureId: string,
   patch: Partial<Omit<NewFeature, 'id' | 'featureId' | 'createdAt'>>,
 ): Promise<FeatureRow | null> {
@@ -68,7 +70,7 @@ export async function patchFeature(
 
 /** `routes/features.ts:117`. */
 export async function deleteFeature(
-  db: StationDatabase,
+  db: PgHandle,
   featureId: string,
 ): Promise<FeatureRow | null> {
   const [row] = await db.delete(features).where(matchesSlug(featureId)).returning();
@@ -76,11 +78,11 @@ export async function deleteFeature(
 }
 
 /** `seed-features.ts:249` — pure `$setOnInsert`. See `plans.ts`'s `seedPlan` for why. */
-export async function seedFeature(db: StationDatabase, values: NewFeature): Promise<boolean> {
+export async function seedFeature(db: PgHandle, values: NewFeature): Promise<boolean> {
   const inserted = await db
     .insert(features)
-    .values(values)
-    .onConflictDoNothing({ target: sql`lower(${features.featureId})` })
+    .values({ ...values, featureId: values.featureId.toLowerCase() })
+    .onConflictDoNothing({ target: features.featureId })
     .returning({ id: features.id });
   return inserted.length > 0;
 }
