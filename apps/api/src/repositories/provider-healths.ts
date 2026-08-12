@@ -19,7 +19,7 @@
  */
 
 import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { providerHealths } from '../db/schema/providers.js';
 
 /**
@@ -57,7 +57,7 @@ export type ProviderHealthRow = typeof providerHealths.$inferSelect;
 
 /** `provider-health.ts:119`. */
 export async function findByProviderModel(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
 ): Promise<ProviderHealthRow | null> {
@@ -77,7 +77,7 @@ export async function findByProviderModel(
  * which is why the read-back is unconditional rather than a fallback.
  */
 export async function ensureExists(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
 ): Promise<ProviderHealthRow> {
@@ -115,7 +115,7 @@ export async function ensureExists(
  * lifetime, so the `case` here is nested in the same order.
  */
 export async function recordSuccess(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
   latencyMs: number,
@@ -188,7 +188,7 @@ export async function recordSuccess(
  * toward closing a half-open circuit.
  */
 export async function recordFailure(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
   errorCode: string | undefined,
@@ -258,7 +258,7 @@ export async function recordFailure(
  * @returns `true` when this call performed the transition.
  */
 export async function transitionToHalfOpen(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
   now: Date = new Date(),
@@ -280,7 +280,7 @@ export async function transitionToHalfOpen(
 }
 
 /** `provider-health.ts:369` — the monitoring dashboard listing. */
-export async function listAll(db: StationDatabase): Promise<ProviderHealthRow[]> {
+export async function listAll(db: PgHandle): Promise<ProviderHealthRow[]> {
   return db
     .select()
     .from(providerHealths)
@@ -295,7 +295,7 @@ export async function listAll(db: StationDatabase): Promise<ProviderHealthRow[]>
  * insert of the reset values on conflict with the same reset values.
  */
 export async function resetOne(
-  db: StationDatabase,
+  db: PgHandle,
   provider: string,
   modelId: string,
   now: Date = new Date(),
@@ -327,14 +327,14 @@ export async function resetOne(
  * rewiring must drop it rather than translate it: "the model was not loaded"
  * and "there was nothing to reset" are the same silent outcome today.
  */
-export async function resetAll(db: StationDatabase, now: Date = new Date()): Promise<number> {
+export async function resetAll(db: PgHandle, now: Date = new Date()): Promise<number> {
   const result = await db.update(providerHealths).set({ ...RESET_VALUES, lastHealthCheck: now });
   return result.count;
 }
 
 /** `seed-model-configs.ts:250` — reset only the circuits that are not closed. */
 export async function resetOpenCircuits(
-  db: StationDatabase,
+  db: PgHandle,
   now: Date = new Date(),
 ): Promise<number> {
   const result = await db
@@ -364,7 +364,7 @@ export async function resetOpenCircuits(
  * @returns The number of circuits moved to half-open.
  */
 export async function sweepOpenCircuits(
-  db: StationDatabase,
+  db: PgHandle,
   now: Date = new Date(),
 ): Promise<number> {
   const openedBefore = new Date(now.getTime() - CIRCUIT.openDurationMs);
@@ -382,7 +382,7 @@ export async function sweepOpenCircuits(
 }
 
 /** Circuits currently not closed. A positive control for the sweeps above. */
-export async function listNonClosed(db: StationDatabase): Promise<ProviderHealthRow[]> {
+export async function listNonClosed(db: PgHandle): Promise<ProviderHealthRow[]> {
   return db
     .select()
     .from(providerHealths)

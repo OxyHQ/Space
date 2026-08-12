@@ -16,7 +16,7 @@
  */
 
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { costEntries } from '../db/schema/providers.js';
 
 export type CostEntryRow = typeof costEntries.$inferSelect;
@@ -40,7 +40,7 @@ const USER_FACING_COLUMNS = {
 } as const;
 
 /** `cost-tracker.ts:125`. */
-export async function recordCost(db: StationDatabase, values: NewCostEntry): Promise<void> {
+export async function recordCost(db: PgHandle, values: NewCostEntry): Promise<void> {
   await db.insert(costEntries).values(values);
 }
 
@@ -68,7 +68,7 @@ function inWindow(from?: Date, to?: Date) {
  * would change what the summary covers, so it stays a scan and the cost is
  * flagged rather than quietly altered.
  */
-export async function listForUser(db: StationDatabase, userId: string, from?: Date, to?: Date) {
+export async function listForUser(db: PgHandle, userId: string, from?: Date, to?: Date) {
   return db
     .select(USER_FACING_COLUMNS)
     .from(costEntries)
@@ -84,7 +84,7 @@ export async function listForUser(db: StationDatabase, userId: string, from?: Da
  * This is the only read here that exposes them.
  */
 export async function listGlobal(
-  db: StationDatabase,
+  db: PgHandle,
   from?: Date,
   to?: Date,
 ): Promise<CostEntryRow[]> {
@@ -108,7 +108,7 @@ export async function listGlobal(
  * a STRING while drizzle types it `number` — the caller adds these to other
  * numbers, so both sums and the request count are cast.
  */
-export async function topUsersByCost(db: StationDatabase, limit = 10, from?: Date, to?: Date) {
+export async function topUsersByCost(db: PgHandle, limit = 10, from?: Date, to?: Date) {
   const conditions = inWindow(from, to);
   return db
     .select({
@@ -136,7 +136,7 @@ export async function topUsersByCost(db: StationDatabase, limit = 10, from?: Dat
  * not read here at all — this is the figure the admin panel shows next to a
  * user-visible model name.
  */
-export async function modelEfficiency(db: StationDatabase) {
+export async function modelEfficiency(db: PgHandle) {
   return db
     .select({
       clarityModelId: costEntries.clarityModelId,
@@ -163,7 +163,7 @@ export async function modelEfficiency(db: StationDatabase) {
  * uuid v7 primary key is NOT monotonic within a millisecond, so `id` is a
  * tiebreak here and never a proxy for creation order.
  */
-export async function listRecentForUser(db: StationDatabase, userId: string, limit = 10) {
+export async function listRecentForUser(db: PgHandle, userId: string, limit = 10) {
   return db
     .select(USER_FACING_COLUMNS)
     .from(costEntries)

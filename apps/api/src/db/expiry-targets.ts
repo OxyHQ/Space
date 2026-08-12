@@ -24,6 +24,12 @@
 
 import type { ExpirySweepTarget } from '@oxyhq/db/expiry';
 import { API_KEY_USAGE_RETENTION_SECONDS, apiKeyUsage } from './schema/billing.js';
+import {
+  AUTH_HEALTH_METRIC_RETENTION_SECONDS,
+  authHealthMetrics,
+  FALLBACK_EVENT_RETENTION_SECONDS,
+  fallbackEvents,
+} from './schema/providers.js';
 
 /**
  * Every billing table that carried a Mongo TTL index.
@@ -51,5 +57,71 @@ export const BILLING_EXPIRY_TARGETS: readonly ExpirySweepTarget[] = [
     retentionSeconds: API_KEY_USAGE_RETENTION_SECONDS,
     reason:
       'Request metering older than 90 days. Costs a data point on a usage chart; bills nothing and blocks no work.',
+  },
+];
+
+/**
+ * Every provider-routing table that carried a Mongo TTL index.
+ *
+ * Derived by grepping `expireAfterSeconds` across the whole repository, not
+ * across one directory: two of this domain's three inline-declared models sit
+ * outside any `models/` folder, and a census scoped to `models/` sees neither.
+ * The repo-wide count is five; one is billing's above, two are here, and the
+ * remaining two belong to domains that must register their own —
+ * `models/notification.ts:84` (90 days, and PARTIAL on `status: 'dismissed'`,
+ * a predicate `ExpirySweepTarget` cannot express) and `models/routing-log.ts:56`
+ * (90 days).
+ *
+ * `internal/providers/models/api-usage.ts` is deliberately ABSENT: it declares
+ * no TTL at all. It is easy to mistake for `models/api-key-usage.ts`, which
+ * does, and giving it a 90-day retention on that resemblance would start
+ * deleting rows nobody agreed to delete. The consequence is real and is
+ * recorded at the `api_usages` table: unbounded growth behind a one-day read
+ * window, wanting a retention policy decided on purpose rather than inherited
+ * by accident.
+ */
+export const PROVIDER_EXPIRY_TARGETS: readonly ExpirySweepTarget[] = [
+  {
+    table: fallbackEvents,
+    column: fallbackEvents.timestamp,
+    retentionSeconds: FALLBACK_EVENT_RETENTION_SECONDS,
+    /**
+     * INTENT CHECK: pure analytics. Nothing reads a fallback event to make a
+     * routing decision — the circuit breaker lives in `provider_healths` — so
+     * deleting one costs a row in an admin chart and blocks no work. It holds
+     * no unprocessed backlog, so a stalled consumer cannot be swept out from
+     * under.
+     *
+     * COEXISTENCE CHECK: the only reader (`routes/fallback-stats.ts:30`) caps
+     * its own window at 720 hours, inside the retention, so no read depends on
+     * a swept row already being gone.
+     *
+     * The `fallback_event_attempts` children go with the parent: their foreign
+     * key is `on delete cascade`, so they need no entry of their own and must
+     * not get one — a second target would delete attempts whose event is still
+     * inside the window.
+     */
+    reason:
+      'Fallback analytics older than 30 days. Costs a row in an admin chart; blocks no work and bills nothing.',
+  },
+  {
+    table: authHealthMetrics,
+    column: authHealthMetrics.createdAt,
+    retentionSeconds: AUTH_HEALTH_METRIC_RETENTION_SECONDS,
+    /**
+     * INTENT CHECK: hourly auth counters, read only by an admin dashboard.
+     *
+     * COEXISTENCE CHECK: the reader caps its window at 168 hours
+     * (`routes/auth-health.ts:23`), inside the retention.
+     *
+     * Note the retention is measured from `createdAt`, NOT from `hour`. That is
+     * what the Mongo index did (`lib/auth-health.ts:53`), and the two differ:
+     * a bucket is deleted seven days after it was first WRITTEN, and a bucket
+     * is written at the start of its hour, so the practical difference is under
+     * an hour. Reproduced rather than "corrected", because changing which
+     * column a retention measures from is a behaviour change.
+     */
+    reason:
+      'Auth health buckets older than 7 days. Costs a point on the auth dashboard; no request depends on one.',
   },
 ];

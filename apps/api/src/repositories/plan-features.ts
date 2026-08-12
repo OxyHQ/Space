@@ -10,7 +10,7 @@
  */
 
 import { and, asc, eq, getTableColumns, sql } from 'drizzle-orm';
-import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { planFeatures } from '../db/schema/providers.js';
 
 export type PlanFeatureRow = typeof planFeatures.$inferSelect;
@@ -28,7 +28,7 @@ export interface PlanFeatureUpsert {
 
 /** `routes/plan-features.ts:25` and `:42`, `lib/gateway-client.ts:491`. */
 export async function listMappings(
-  db: StationDatabase,
+  db: PgHandle,
   filter: { planId?: string } = {},
 ): Promise<PlanFeatureRow[]> {
   return db
@@ -40,7 +40,7 @@ export async function listMappings(
 
 /** One mapping, for a caller that wants to read back what it just wrote. */
 export async function findMapping(
-  db: StationDatabase,
+  db: PgHandle,
   planId: string,
   featureId: string,
 ): Promise<PlanFeatureRow | null> {
@@ -73,7 +73,7 @@ export async function findMapping(
  * which for all three is NULL — so only the conflict branch needs the care.
  */
 export async function upsertMapping(
-  db: StationDatabase,
+  db: PgHandle,
   mapping: PlanFeatureUpsert,
 ): Promise<PlanFeatureRow> {
   const { row } = await upsertOne(db, mapping);
@@ -88,7 +88,7 @@ export async function upsertMapping(
  * Mongo's `upsertedCount`.
  */
 async function upsertOne(
-  db: StationDatabase,
+  db: PgHandle,
   mapping: PlanFeatureUpsert,
 ): Promise<{ row: PlanFeatureRow; inserted: boolean }> {
   const update: Partial<NewPlanFeature> = {
@@ -131,7 +131,7 @@ async function upsertOne(
  * write.
  */
 export async function bulkUpsertMappings(
-  db: StationDatabase,
+  db: PgHandle,
   mappings: readonly PlanFeatureUpsert[],
 ): Promise<{ upserted: number; modified: number; total: number }> {
   if (mappings.length === 0) return { upserted: 0, modified: 0, total: 0 };
@@ -156,7 +156,7 @@ export async function bulkUpsertMappings(
  * hand-made change on the next boot.
  */
 export async function seedMappings(
-  db: StationDatabase,
+  db: PgHandle,
   mappings: readonly PlanFeatureUpsert[],
 ): Promise<number> {
   if (mappings.length === 0) return 0;
@@ -180,7 +180,7 @@ export async function seedMappings(
 
 /** `routes/plan-features.ts:144`. */
 export async function deleteMapping(
-  db: StationDatabase,
+  db: PgHandle,
   planId: string,
   featureId: string,
 ): Promise<PlanFeatureRow | null> {
