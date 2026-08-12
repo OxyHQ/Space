@@ -76,3 +76,6 @@ apps/mobile/.expo/
 apps/mobile/dist/
 Perplexity.html
 Perplexity_files/
+
+# Per-agent worktrees (AGENTS.md: one worktree per agent)
+.worktrees/
