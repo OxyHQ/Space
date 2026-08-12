@@ -30,12 +30,12 @@
     "tryAgain": "Try Again"
   },
   "welcome": {
-    "title": "Oxy Space",
+    "title": "Oxy Station",
     "subtitle": "Your workspace is empty. Pages and databases land in Phase 1."
   },
   "login": {
     "title": "Sign in or sign up",
-    "subtitle": "to continue to Oxy Space",
+    "subtitle": "to continue to Oxy Station",
     "continueWithGoogle": "Continue with Google",
     "continueWithMicrosoft": "Continue with Microsoft",
     "continueWithApple": "Continue with Apple",
@@ -47,14 +47,14 @@
     "signingIn": "Signing in...",
     "footerText": "Don't have an account?",
     "footerLink": "Sign up",
-    "termsPrefix": "By continuing, you agree to Oxy Space's ",
+    "termsPrefix": "By continuing, you agree to Oxy Station's ",
     "termsOfService": "Terms of Service",
     "termsAnd": " and ",
     "privacyPolicy": "Privacy Policy"
   },
   "register": {
     "title": "Create Oxy Account",
-    "subtitle": "Sign up to get started with Oxy Space",
+    "subtitle": "Sign up to get started with Oxy Station",
     "firstNamePlaceholder": "First Name",
     "lastNamePlaceholder": "Last Name (Optional)",
     "emailPlaceholder": "Email",
@@ -283,7 +283,7 @@
   },
   "feedback": {
     "title": "Send Feedback",
-    "subtitle": "Help us improve Oxy Space",
+    "subtitle": "Help us improve Oxy Station",
     "typeQuestion": "What type of feedback?",
     "bugReport": "Bug Report",
     "bugDescription": "Something is broken or not working",
@@ -307,7 +307,7 @@
     "characterCount": "{{count}}/1000 characters",
     "submitButton": "Submit Feedback",
     "submitting": "Submitting...",
-    "footerText": "Your feedback helps us improve Oxy Space. Thank you for taking the time to share your thoughts.",
+    "footerText": "Your feedback helps us improve Oxy Station. Thank you for taking the time to share your thoughts.",
     "selectType": "Please select a feedback type",
     "enterMessage": "Please enter your feedback message",
     "moreDetails": "Please provide more details (at least 10 characters)",

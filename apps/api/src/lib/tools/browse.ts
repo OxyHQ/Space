@@ -62,13 +62,13 @@ export const browseTool = tool({
         if (!check.valid) return { action, error: `URL blocked: ${check.reason}` };
       }
 
-      // Use the Oxy Space API as LLM backend (OpenAI-compatible endpoint)
+      // Use the Oxy Station API as LLM backend (OpenAI-compatible endpoint)
       const serviceSecret = process.env.SERVICE_SECRET;
       if (!serviceSecret) {
         return { action, error: 'SERVICE_SECRET not configured for browse tool' };
       }
 
-      const oxySpaceApiUrl = process.env.OXYSPACE_API_URL || 'http://localhost:4001';
+      const oxySpaceApiUrl = process.env.OXYSTATION_API_URL || 'http://localhost:4001';
 
       log.tools.info({ action, query, url }, 'Browse tool starting');
 

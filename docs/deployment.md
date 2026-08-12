@@ -2,15 +2,15 @@
 
 Last updated: 2026-04-10
 
-This guide covers production deployment for Oxy Space. Infrastructure is defined as code using [SST](https://sst.dev) with DigitalOcean and Cloudflare providers.
+This guide covers production deployment for Oxy Station. Infrastructure is defined as code using [SST](https://sst.dev) with DigitalOcean and Cloudflare providers.
 
 ## Infrastructure as Code (SST)
 
 All infrastructure is defined in `sst.config.ts` at the repo root. SST manages:
 
 - **DO App Platform**: API service + static frontend
-- **DO Spaces**: File storage bucket (`bucket-oxyspace`)
-- **Domains**: space.oxy.so, api.space.oxy.so
+- **DO Spaces**: File storage bucket (`bucket-oxystation`)
+- **Domains**: station.oxy.so, api.station.oxy.so
 
 Shared resources (MongoDB, Valkey) are referenced by cluster name but managed externally across all Oxy apps.
 
@@ -65,9 +65,9 @@ bunx sst dev    # Starts multiplexer with linked resources
 
 Use per-app, per-env database naming:
 
-- `oxyspace-development`
-- `oxyspace-staging`
-- `oxyspace-production`
+- `oxystation-development`
+- `oxystation-staging`
+- `oxystation-production`
 
 Set database name via `mongoose.connect(..., { dbName })`.
 
@@ -78,7 +78,7 @@ These are configured in `sst.config.ts` and injected via DO App Platform:
 ```bash
 PORT=8080
 NODE_ENV=production
-WEB_URL=https://space.oxy.so
+WEB_URL=https://station.oxy.so
 MONGODB_URI=<from db-oxy cluster>
 REDIS_URL=<from db-valkey cluster>
 SERVICE_SECRET=<strong-secret>       # Set as SECRET in DO dashboard
@@ -92,7 +92,7 @@ AWS_REGION=ams3
 AWS_ACCESS_KEY_ID=<secret>
 AWS_SECRET_ACCESS_KEY=<secret>
 AWS_ENDPOINT_URL=https://ams3.digitaloceanspaces.com
-AWS_S3_BUCKET=bucket-oxyspace
+AWS_S3_BUCKET=bucket-oxystation
 
 # Stripe
 STRIPE_SECRET_KEY=<secret>

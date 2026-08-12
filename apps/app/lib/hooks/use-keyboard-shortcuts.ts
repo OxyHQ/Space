@@ -32,7 +32,7 @@ function getShortcutContext(e: KeyboardEvent): ShortcutContext {
 }
 
 /**
- * Global keyboard shortcuts for Oxy Space. Web-only — native keyboards don't
+ * Global keyboard shortcuts for Oxy Station. Web-only — native keyboards don't
  * have a meaningful Cmd/Ctrl convention for app-wide actions. Mounted once at
  * the (app) layout level.
  *

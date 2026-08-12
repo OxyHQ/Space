@@ -15,6 +15,6 @@
 ## Checklist
 
 - [ ] TypeScript compiles (`tsc --noEmit`)
-- [ ] Tests pass (`bun test --filter @oxyspace/api`)
+- [ ] Tests pass (`bun test --filter @oxystation/api`)
 - [ ] No provider names exposed in UI, errors, or API responses
 - [ ] Lint passes

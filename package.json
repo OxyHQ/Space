@@ -1,8 +1,8 @@
 {
-  "name": "oxyspace-monorepo",
+  "name": "oxystation-monorepo",
   "version": "1.0.0",
   "license": "SEE LICENSE IN LICENSE",
-  "description": "Oxy Space - workspace for docs, databases, and AI",
+  "description": "Oxy Station - workspace for docs, databases, and AI",
   "private": true,
   "workspaces": [
     "apps/api",
@@ -11,24 +11,24 @@
   "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "bun run --filter '*' dev",
-    "dev:app": "bun run --filter @oxyspace/app dev -- --clear --tunnel",
-    "dev:api": "bun run --filter @oxyspace/api dev",
+    "dev:app": "bun run --filter @oxystation/app dev -- --clear --tunnel",
+    "dev:api": "bun run --filter @oxystation/api dev",
     "build": "bun run --filter '*' build",
-    "build:app": "bun run --filter @oxyspace/app build",
-    "build:api": "bun run --filter @oxyspace/api build",
-    "start:app": "bun run --filter @oxyspace/app start",
-    "start:api": "bun run --filter @oxyspace/api start",
+    "build:app": "bun run --filter @oxystation/app build",
+    "build:api": "bun run --filter @oxystation/api build",
+    "start:app": "bun run --filter @oxystation/app start",
+    "start:api": "bun run --filter @oxystation/api start",
     "lint": "bun run --filter '*' lint",
-    "android": "bun run --filter @oxyspace/app android",
-    "ios": "bun run --filter @oxyspace/app ios",
-    "web": "bun run --filter @oxyspace/app web"
+    "android": "bun run --filter @oxystation/app android",
+    "ios": "bun run --filter @oxystation/app ios",
+    "web": "bun run --filter @oxystation/app web"
   },
   "keywords": [
     "monorepo",
     "workspace",
     "expo",
     "api",
-    "oxyspace"
+    "oxystation"
   ],
   "author": "",
   "devDependencies": {

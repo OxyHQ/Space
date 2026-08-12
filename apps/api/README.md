@@ -1,11 +1,11 @@
-# Oxy Space API
+# Oxy Station API
 
-Express + TypeScript backend for Oxy Space.
+Express + TypeScript backend for Oxy Station.
 
 ## Tech
 
 - Express + TypeScript
-- MongoDB + Mongoose (shared `db-oxy` cluster, app database `oxyspace-{NODE_ENV}`)
+- MongoDB + Mongoose (shared `db-oxy` cluster, app database `oxystation-{NODE_ENV}`)
 - Redis (Valkey) for rate limits, caching, Socket.IO scale-out
 - Socket.IO for real-time events
 - BullMQ for async jobs
@@ -47,4 +47,4 @@ Key groups:
 
 - All user-facing errors must be sanitized via `apps/api/src/lib/errors/sanitize.ts`.
 - Internal model-routing details (provider names, provider model IDs) must never leak in public responses or logs.
-- The legacy `/clarity/search` and `/v1/chat/completions` chat endpoints remain mounted while Phase 5 (Hub AI) is internal-only; they are not surfaced in the Oxy Space UI.
+- The legacy `/clarity/search` and `/v1/chat/completions` chat endpoints remain mounted while Phase 5 (Hub AI) is internal-only; they are not surfaced in the Oxy Station UI.

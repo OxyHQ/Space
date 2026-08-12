@@ -23,7 +23,7 @@ function generateToken(): string {
 }
 
 function shareLinkPublicUrl(token: string): string {
-  const base = process.env.OXYSPACE_PUBLIC_URL || 'https://space.oxy.so';
+  const base = process.env.OXYSTATION_PUBLIC_URL || 'https://station.oxy.so';
   return `${base.replace(/\/$/, '')}/share/${token}`;
 }
 

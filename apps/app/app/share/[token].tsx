@@ -10,7 +10,7 @@ import {
 import { useLocalSearchParams } from "expo-router";
 import axios from "axios";
 import { Text } from "@/components/ui/text";
-import { OxySpaceWordmark } from "@/components/ui/oxy-space-wordmark";
+import { OxyStationWordmark } from "@/components/ui/oxy-station-wordmark";
 import { useColorScheme } from "@/lib/useColorScheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -39,7 +39,7 @@ function ShareLoadState({ title, body }: ShareLoadStateProps) {
 
 function ShareFooter() {
   const handlePress = React.useCallback(() => {
-    const url = "https://space.oxy.so";
+    const url = "https://station.oxy.so";
     if (Platform.OS === "web") {
       if (typeof window !== "undefined") {
         window.open(url, "_blank", "noopener");
@@ -56,10 +56,10 @@ function ShareFooter() {
       onPress={handlePress}
       className="flex-row items-center justify-center gap-2 py-4"
       accessibilityRole="link"
-      accessibilityLabel="Made with Oxy Space"
+      accessibilityLabel="Made with Oxy Station"
     >
       <Text className="text-xs text-muted-foreground">Made with</Text>
-      <OxySpaceWordmark width={70} />
+      <OxyStationWordmark width={70} />
     </Pressable>
   );
 }

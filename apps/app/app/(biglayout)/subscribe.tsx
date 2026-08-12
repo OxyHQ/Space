@@ -69,7 +69,7 @@ export default function SubscribeScreen() {
   return (
     <>
       <Head>
-        <title>Subscribe - Oxy Space</title>
+        <title>Subscribe - Oxy Station</title>
       </Head>
       <View className="flex-1 bg-background">
         {/* Header */}

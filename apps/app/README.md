@@ -1,6 +1,6 @@
-# Oxy Space App
+# Oxy Station App
 
-Expo client for Oxy Space — web, iOS, and Android.
+Expo client for Oxy Station — web, iOS, and Android.
 
 ## Tech
 
@@ -32,7 +32,7 @@ bun run android
 
 Configured in `apps/app/lib/config.ts`.
 
-Expected production API: `https://api.space.oxy.so`
+Expected production API: `https://api.station.oxy.so`
 
 ## Notes
 

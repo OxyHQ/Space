@@ -6,9 +6,9 @@ import { log } from './lib/logger.js';
 
 const ALLOWED_ORIGINS = [
   process.env.WEB_URL || 'http://localhost:3000',
-  'https://space.oxy.so',
-  'https://console.space.oxy.so',
-  'https://gateway.space.oxy.so',
+  'https://station.oxy.so',
+  'https://console.station.oxy.so',
+  'https://gateway.station.oxy.so',
 ];
 
 let io: Server | null = null;
@@ -147,7 +147,7 @@ export function emitApprovalRequest(sessionId: string, data: {
       ...data,
     };
     io.to(`agent-session:${sessionId}`).emit('agent-approval-request', payload);
-    io.to(`agent-session:${sessionId}`).emit('oxyspace.approval_request', payload);
+    io.to(`agent-session:${sessionId}`).emit('oxystation.approval_request', payload);
   }
 }
 
@@ -162,7 +162,7 @@ export function emitApprovalResult(sessionId: string, data: {
       ...data,
     };
     io.to(`agent-session:${sessionId}`).emit('agent-approval-result', payload);
-    io.to(`agent-session:${sessionId}`).emit('oxyspace.approval_result', payload);
+    io.to(`agent-session:${sessionId}`).emit('oxystation.approval_result', payload);
   }
 }
 

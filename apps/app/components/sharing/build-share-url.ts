@@ -5,7 +5,7 @@ import { Platform } from "react-native";
  * Priority:
  *   1. EXPO_PUBLIC_WEB_URL (set in CI/staging/prod env)
  *   2. window.location.origin (web only)
- *   3. Production fallback `https://space.oxy.so`
+ *   3. Production fallback `https://station.oxy.so`
  */
 function resolveWebOrigin(): string {
   if (process.env.EXPO_PUBLIC_WEB_URL) {
@@ -14,7 +14,7 @@ function resolveWebOrigin(): string {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     return window.location.origin;
   }
-  return "https://space.oxy.so";
+  return "https://station.oxy.so";
 }
 
 export function buildShareUrl(token: string): string {

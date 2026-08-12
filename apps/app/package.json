@@ -1,10 +1,10 @@
 {
-  "name": "@oxyspace/app",
+  "name": "@oxystation/app",
   "main": "index",
   "version": "1.0.0",
   "scripts": {
     "start": "expo start --clear --tunnel",
-    "dev": "expo start --scheme oxyspace",
+    "dev": "expo start --scheme oxystation",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",

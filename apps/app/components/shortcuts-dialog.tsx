@@ -51,7 +51,7 @@ export function ShortcutsDialog() {
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            Move faster in Oxy Space with these shortcuts.
+            Move faster in Oxy Station with these shortcuts.
           </DialogDescription>
         </DialogHeader>
         <View className="gap-5">

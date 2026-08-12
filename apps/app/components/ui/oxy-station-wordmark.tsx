@@ -2,18 +2,18 @@ import React from "react";
 import { Text, View } from "react-native";
 import { useColorScheme } from "@/lib/useColorScheme";
 
-export interface OxySpaceWordmarkProps {
+export interface OxyStationWordmarkProps {
   width?: number;
   height?: number;
   color?: string;
 }
 
 /**
- * Simple text wordmark for Oxy Space.
+ * Simple text wordmark for Oxy Station.
  * `width` controls the rendered font size so call sites can keep the
  * same numeric scale used by the previous SVG wordmark.
  */
-export function OxySpaceWordmark({ width = 256, height, color }: OxySpaceWordmarkProps) {
+export function OxyStationWordmark({ width = 256, height, color }: OxyStationWordmarkProps) {
   const { colors } = useColorScheme();
   const fill = color ?? colors.foreground;
 
@@ -38,7 +38,7 @@ export function OxySpaceWordmark({ width = 256, height, color }: OxySpaceWordmar
           lineHeight: fontSize * 1.1,
         }}
       >
-        Oxy Space
+        Oxy Station
       </Text>
     </View>
   );

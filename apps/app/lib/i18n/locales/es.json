@@ -30,12 +30,12 @@
     "tryAgain": "Reintentar"
   },
   "welcome": {
-    "title": "Oxy Space",
+    "title": "Oxy Station",
     "subtitle": "Tu workspace está vacío. Las páginas y bases de datos llegan en la fase 1."
   },
   "login": {
     "title": "Inicia sesión o regístrate",
-    "subtitle": "para continuar a Oxy Space",
+    "subtitle": "para continuar a Oxy Station",
     "continueWithGoogle": "Continuar con Google",
     "continueWithMicrosoft": "Continuar con Microsoft",
     "continueWithApple": "Continuar con Apple",
@@ -54,7 +54,7 @@
   },
   "register": {
     "title": "Crear cuenta Oxy",
-    "subtitle": "Regístrate para empezar a usar Oxy Space",
+    "subtitle": "Regístrate para empezar a usar Oxy Station",
     "firstNamePlaceholder": "Nombre",
     "lastNamePlaceholder": "Apellido (opcional)",
     "emailPlaceholder": "Email",
@@ -283,7 +283,7 @@
   },
   "feedback": {
     "title": "Enviar comentarios",
-    "subtitle": "Ayúdanos a mejorar Oxy Space",
+    "subtitle": "Ayúdanos a mejorar Oxy Station",
     "typeQuestion": "¿Qué tipo de comentario?",
     "bugReport": "Informe de error",
     "bugDescription": "Algo no funciona como debería",
@@ -307,7 +307,7 @@
     "characterCount": "{{count}}/1000 caracteres",
     "submitButton": "Enviar comentarios",
     "submitting": "Enviando...",
-    "footerText": "Tus comentarios nos ayudan a mejorar Oxy Space. Gracias por compartir tu opinión.",
+    "footerText": "Tus comentarios nos ayudan a mejorar Oxy Station. Gracias por compartir tu opinión.",
     "selectType": "Selecciona un tipo de comentario",
     "enterMessage": "Introduce tu mensaje",
     "moreDetails": "Da más detalles (mínimo 10 caracteres)",

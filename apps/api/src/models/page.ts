@@ -1,7 +1,7 @@
 import mongoose, { Schema, Model, Document } from 'mongoose';
 
 /**
- * Page — the document primitive for Oxy Space.
+ * Page — the document primitive for Oxy Station.
  * Pages form a tree per workspace (parentId points at a parent page, null = root).
  * Soft-delete via `archived`. Hard-delete is gated on workspace ownership.
  *

@@ -1,15 +1,15 @@
-# DigitalOcean App Platform spec for oxyspace-production
+# DigitalOcean App Platform spec for oxystation-production
 # NOTE: Infrastructure is now managed by SST (sst.config.ts).
 # This file is kept as a reference / fallback.
 # WARNING: Renaming the live App Platform app or bucket below may cause downtime
 # or orphan existing infra. Coordinate any live-infra changes with operations.
-name: oxyspace-production
+name: oxystation-production
 region: ams
 
 services:
-  - name: oxyspace-api
+  - name: oxystation-api
     github:
-      repo: OxyHQ/Clarity
+      repo: OxyHQ/Station
       branch: main
       deploy_on_push: true
 
@@ -44,7 +44,7 @@ services:
       - key: SERVICE_SECRET
         type: SECRET
       - key: WEB_URL
-        value: "https://space.oxy.so"
+        value: "https://station.oxy.so"
       # S3/Spaces
       - key: AWS_REGION
         value: "ams3"
@@ -55,7 +55,7 @@ services:
       - key: AWS_ENDPOINT_URL
         value: "https://ams3.digitaloceanspaces.com"
       - key: AWS_S3_BUCKET
-        value: "bucket-oxyspace"
+        value: "bucket-oxystation"
       # Stripe
       - key: STRIPE_SECRET_KEY
         type: SECRET
@@ -72,9 +72,9 @@ services:
         value: "wss://livekit.oxy.so"
 
 static_sites:
-  - name: oxyspace-app
+  - name: oxystation-app
     github:
-      repo: OxyHQ/Clarity
+      repo: OxyHQ/Station
       branch: main
       deploy_on_push: true
     build_command: >-
@@ -98,10 +98,10 @@ databases:
     cluster_name: db-valkey-ams3-04785
 
 domains:
-  - domain: space.oxy.so
+  - domain: station.oxy.so
     type: PRIMARY
     zone: oxy.so
-  - domain: api.space.oxy.so
+  - domain: api.station.oxy.so
     type: ALIAS
     zone: oxy.so
 

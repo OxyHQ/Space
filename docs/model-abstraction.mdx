@@ -6,13 +6,13 @@ order: 2
 
 # Model abstraction (internal)
 
-> This describes the internal AI provider routing layer carried over from the legacy Clarity AI chat product. It is reserved for Phase 5 (Hub AI) and is **not** exposed to end users in Oxy Space. There is no user-facing model picker.
+> This describes the internal AI provider routing layer carried over from the legacy Clarity AI chat product. It is reserved for Phase 5 (Hub AI) and is **not** exposed to end users in Oxy Station. There is no user-facing model picker.
 
 The routing layer is multi-provider on the backend (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, …) and is strictly internal. Provider names, provider model IDs, and routing decisions never appear in user-facing UI, API responses, error messages, SEO metadata, or analytics dashboards.
 
 ## Internal catalogue
 
-Clarity ships a small, named tier set. The complete list (with token limits, credit multipliers, and category flags) lives in [`apps/api/src/internal/providers/lib/clarity-models.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/internal/providers/lib/clarity-models.ts).
+Clarity ships a small, named tier set. The complete list (with token limits, credit multipliers, and category flags) lives in [`apps/api/src/internal/providers/lib/clarity-models.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/internal/providers/lib/clarity-models.ts).
 
 | Model id | Tier | Use case |
 |----------|------|----------|
@@ -56,7 +56,7 @@ Three layers ensure provider names never leak:
 
 ### 1. Error messages
 
-Every user-facing error path calls `sanitizeMessage()` from [`apps/api/src/lib/errors/sanitize.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/lib/errors/sanitize.ts). It strips known provider names, provider model IDs, and provider-specific error codes, replacing them with neutral language.
+Every user-facing error path calls `sanitizeMessage()` from [`apps/api/src/lib/errors/sanitize.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/lib/errors/sanitize.ts). It strips known provider names, provider model IDs, and provider-specific error codes, replacing them with neutral language.
 
 ```ts
 import { sanitizeMessage } from '@/lib/errors/sanitize';

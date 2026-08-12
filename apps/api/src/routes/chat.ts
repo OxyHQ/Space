@@ -10,7 +10,7 @@ router.post('/', optionalAuth, handleChatCompletions);
 router.get('/', async (_req, res) => {
   res.json({
     status: 'online',
-    service: 'Oxy Space Chat',
+    service: 'Oxy Station Chat',
     endpoint: '/clarity/search',
     runtime: 'autonomy-v1',
   });

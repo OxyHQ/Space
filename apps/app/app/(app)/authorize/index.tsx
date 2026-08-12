@@ -27,12 +27,12 @@ interface AppConfig {
 const APP_CONFIGS: Record<string, AppConfig> = {
   codea: {
     name: 'codea',
-    displayName: 'Oxy Space',
+    displayName: 'Oxy Station',
     permissionKeys: ['sendMessages', 'useCredits', 'accessModels'],
   },
   cowork: {
     name: 'cowork',
-    displayName: 'Oxy Space',
+    displayName: 'Oxy Station',
     permissionKeys: ['sendMessages', 'useCredits', 'accessModels'],
   },
   telegram: {
@@ -375,7 +375,7 @@ export default function AuthorizeScreen() {
                   </>
                 ) : appConfig.isChannel ? (
                   <Text className="text-xs text-muted-foreground text-center">
-                    You can now return to {appConfig.displayName} and continue working in Oxy Space!
+                    You can now return to {appConfig.displayName} and continue working in Oxy Station!
                   </Text>
                 ) : (
                   <Text className="text-xs text-muted-foreground text-center">

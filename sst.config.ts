@@ -1,7 +1,7 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 /**
- * Oxy Space SST Infrastructure
+ * Oxy Station SST Infrastructure
  *
  * Manages:
  * - DigitalOcean App Platform (API service + static frontend)
@@ -23,7 +23,7 @@
 export default $config({
   app(input) {
     return {
-      name: "oxyspace",
+      name: "oxystation",
       home: "local",
       removal: input.stage === "production" ? "retain" : "remove",
       providers: {
@@ -40,14 +40,14 @@ export default $config({
     // -------------------------------------------------------
     // DigitalOcean Spaces bucket for file uploads
     // -------------------------------------------------------
-    const bucket = new digitalocean.SpacesBucket("OxySpaceBucket", {
-      name: isProd ? "bucket-oxyspace" : `bucket-oxyspace-${$app.stage}`,
+    const bucket = new digitalocean.SpacesBucket("OxyStationBucket", {
+      name: isProd ? "bucket-oxystation" : `bucket-oxystation-${$app.stage}`,
       region,
       acl: "private",
     });
 
     // CORS for the bucket
-    new digitalocean.SpacesBucketCorsConfiguration("OxySpaceBucketCors", {
+    new digitalocean.SpacesBucketCorsConfiguration("OxyStationBucketCors", {
       bucket: bucket.id,
       region,
       corsRules: [
@@ -55,7 +55,7 @@ export default $config({
           allowedHeaders: ["*"],
           allowedMethods: ["GET", "PUT", "POST", "DELETE", "HEAD"],
           allowedOrigins: isProd
-            ? ["https://space.oxy.so", "https://api.space.oxy.so"]
+            ? ["https://station.oxy.so", "https://api.station.oxy.so"]
             : ["*"],
           maxAgeSeconds: 3600,
         },
@@ -65,17 +65,17 @@ export default $config({
     // -------------------------------------------------------
     // DigitalOcean App Platform
     // -------------------------------------------------------
-    const app = new digitalocean.App("OxySpaceApp", {
+    const app = new digitalocean.App("OxyStationApp", {
       spec: {
-        name: isProd ? "oxyspace-production" : `oxyspace-${$app.stage}`,
+        name: isProd ? "oxystation-production" : `oxystation-${$app.stage}`,
         region: "ams",
 
         // --- API service ---
         services: [
           {
-            name: "oxyspace-api",
+            name: "oxystation-api",
             github: {
-              repo: "OxyHQ/Clarity",
+              repo: "OxyHQ/Station",
               branch: isProd ? "main" : $app.stage,
               deployOnPush: true,
             },
@@ -109,8 +109,8 @@ export default $config({
               {
                 key: "WEB_URL",
                 value: isProd
-                  ? "https://space.oxy.so"
-                  : `https://${$app.stage}.space.oxy.so`,
+                  ? "https://station.oxy.so"
+                  : `https://${$app.stage}.station.oxy.so`,
               },
               // S3/Spaces
               { key: "AWS_REGION", value: region },
@@ -136,9 +136,9 @@ export default $config({
         // --- Static frontend ---
         staticSites: [
           {
-            name: "oxyspace-app",
+            name: "oxystation-app",
             github: {
-              repo: "OxyHQ/Clarity",
+              repo: "OxyHQ/Station",
               branch: isProd ? "main" : $app.stage,
               deployOnPush: true,
             },
@@ -175,8 +175,8 @@ export default $config({
         // --- Domains ---
         ...(isProd && {
           domains: [
-            { domain: "space.oxy.so", type: "PRIMARY", zone: "oxy.so" },
-            { domain: "api.space.oxy.so", type: "ALIAS", zone: "oxy.so" },
+            { domain: "station.oxy.so", type: "PRIMARY", zone: "oxy.so" },
+            { domain: "api.station.oxy.so", type: "ALIAS", zone: "oxy.so" },
           ],
         }),
 

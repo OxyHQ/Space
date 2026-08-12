@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Oxy Space (formerly Clarity) are documented here.
+All notable changes to Oxy Station (formerly Clarity) are documented here.
 
 ## [2026-03-07]
 

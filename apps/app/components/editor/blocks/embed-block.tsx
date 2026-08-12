@@ -64,7 +64,7 @@ function buildEmbed(url: string): EmbedDescriptor | null {
   // Figma
   if (host.endsWith("figma.com")) {
     return {
-      src: `https://www.figma.com/embed?embed_host=oxyspace&url=${encodeURIComponent(url)}`,
+      src: `https://www.figma.com/embed?embed_host=oxystation&url=${encodeURIComponent(url)}`,
       source: "figma",
       ratio: 4 / 3,
     };
