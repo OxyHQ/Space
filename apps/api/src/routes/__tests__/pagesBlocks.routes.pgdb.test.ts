@@ -51,7 +51,7 @@ import { closeDb } from '../../db/client.js';
 // the `Express.Request` augmentation in `middleware/auth.ts` is written
 // against, so it is what `req.workspace.role` has to satisfy. `vi.mock`
 // replaces a module at runtime and leaves its types alone.
-import type { WorkspaceRole } from '../../models/workspace-member.js';
+import type { WorkspaceRole } from '../../db/schema/workspaces.js';
 
 /**
  * The membership answer the mocked middleware gives. Mutable so a test can ask

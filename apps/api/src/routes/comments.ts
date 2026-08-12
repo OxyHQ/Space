@@ -1,17 +1,24 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import mongoose from 'mongoose';
 import { z } from 'zod';
+import { getDb } from '../db/client.js';
+import { findBlockById } from '../repositories/blocks.js';
+import { findPageById, findPagesByIds } from '../repositories/pages.js';
+import { listMembershipsForUsers } from '../repositories/workspaces.js';
 import {
-  Comment,
+  createComment,
+  deleteComment,
+  deleteCommentThread,
+  findCommentById,
+  listCommentsByBlock,
+  listCommentsByPage,
+  setCommentResolvedAt,
+  updateCommentContent,
   type CommentContent,
   type CommentSegment,
-  type IComment,
+  type CommentRow,
   type MentionSegment,
-} from '../models/comment.js';
-import { Block } from '../models/block.js';
-import { Page } from '../models/page.js';
-import { WorkspaceMember } from '../models/workspace-member.js';
+} from '../repositories/comments.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireWorkspaceMember } from '../middleware/workspace.js';
 import { sendNotification } from '../lib/notification-service.js';
@@ -22,9 +29,13 @@ router.use(authenticateToken);
 
 const EDIT_WINDOW_MINUTES = 30;
 
-const objectIdSchema = z
-  .string()
-  .regex(/^[0-9a-fA-F]{24}$/u, 'Invalid id');
+/**
+ * Ids are opaque. The 24-hex ObjectId regex this replaces rejected every
+ * uuidv7 the schema now produces, which would have 400'd every comments
+ * route — so a shape gate is not "ported" here, it is deleted. A malformed
+ * id matches no row and reaches the same 404 by asking the database.
+ */
+const objectIdSchema = z.string().min(1, 'Invalid id');
 
 const isoDateSchema = z
   .string()
@@ -91,7 +102,7 @@ function flattenSegments(segments: CommentSegment[]): string {
  */
 async function validateAndNormalizeContent(
   segments: z.infer<typeof segmentSchema>[],
-  workspaceId: mongoose.Types.ObjectId,
+  workspaceId: string,
 ): Promise<{ segments: CommentSegment[]; mentionedUserIds: string[] }> {
   const userIds = new Set<string>();
   const pageIds = new Set<string>();
@@ -152,12 +163,7 @@ async function validateAndNormalizeContent(
 
   // Verify user mentions belong to the workspace.
   if (userIds.size > 0) {
-    const members = await WorkspaceMember.find({
-      workspaceId,
-      userId: { $in: Array.from(userIds) },
-    })
-      .select('userId')
-      .lean();
+    const members = await listMembershipsForUsers(getDb(), workspaceId, Array.from(userIds));
     const validUserIds = new Set(members.map((m) => m.userId));
     for (const id of userIds) {
       if (!validUserIds.has(id)) {
@@ -174,13 +180,13 @@ async function validateAndNormalizeContent(
 
   // Verify page mentions belong to the workspace.
   if (pageIds.size > 0) {
-    const pages = await Page.find({
-      _id: { $in: Array.from(pageIds).map((id) => new mongoose.Types.ObjectId(id)) },
-      workspaceId,
-    })
-      .select('_id')
-      .lean();
-    const validPageIds = new Set(pages.map((p) => String(p._id)));
+    // Scoped to the workspace in the caller, not in the query: a page mention
+    // pointing at another workspace's page must be rejected, and asking for the
+    // ids and then filtering keeps that decision visible here.
+    const pages = (await findPagesByIds(getDb(), Array.from(pageIds))).filter(
+      (page) => page.workspaceId === workspaceId,
+    );
+    const validPageIds = new Set(pages.map((p) => p.id));
     for (const id of pageIds) {
       if (!validPageIds.has(id)) {
         throw new z.ZodError([
@@ -220,28 +226,15 @@ async function validateAndNormalizeContent(
   return { segments: normalized, mentionedUserIds: Array.from(userIds) };
 }
 
-type SerializableComment = Pick<
-  IComment,
-  | '_id'
-  | 'workspaceId'
-  | 'pageId'
-  | 'blockId'
-  | 'parentCommentId'
-  | 'authorId'
-  | 'content'
-  | 'resolvedAt'
-  | 'editedAt'
-  | 'createdAt'
-  | 'updatedAt'
->;
+type SerializableComment = CommentRow;
 
 function serializeComment(c: SerializableComment) {
   return {
-    id: String(c._id),
-    workspaceId: String(c.workspaceId),
-    pageId: String(c.pageId),
-    blockId: c.blockId ? String(c.blockId) : null,
-    parentCommentId: c.parentCommentId ? String(c.parentCommentId) : null,
+    id: c.id,
+    workspaceId: c.workspaceId,
+    pageId: c.pageId,
+    blockId: c.blockId,
+    parentCommentId: c.parentCommentId,
     authorId: c.authorId,
     content: c.content,
     resolvedAt: c.resolvedAt,
@@ -267,7 +260,7 @@ function handleZodError(err: unknown, res: Response): boolean {
 async function checkWorkspaceMembership(
   req: Request,
   res: Response,
-  workspaceId: mongoose.Types.ObjectId | string,
+  workspaceId: string,
 ): Promise<boolean> {
   req.headers['x-workspace-id'] = String(workspaceId);
   const passed = await new Promise<boolean>((resolve) => {
@@ -293,9 +286,9 @@ async function checkWorkspaceMembership(
  * creation must succeed even if downstream messaging is offline.
  */
 async function notifyMentions(
-  comment: IComment,
+  comment: CommentRow,
   mentionedUserIds: string[],
-  page: { _id: mongoose.Types.ObjectId; title: string },
+  page: { id: string; title: string },
 ): Promise<void> {
   const recipients = mentionedUserIds.filter((id) => id !== comment.authorId);
   if (recipients.length === 0) return;
@@ -313,14 +306,14 @@ async function notifyMentions(
           body: preview,
           priority: 'normal',
           data: {
-            commentId: String(comment._id),
-            pageId: String(page._id),
+            commentId: comment.id,
+            pageId: page.id,
             blockId: comment.blockId ? String(comment.blockId) : null,
             authorId: comment.authorId,
           },
         });
       } catch (err: unknown) {
-        log.general.warn({ err, userId, commentId: String(comment._id) }, 'Failed to send mention notification');
+        log.general.warn({ err, userId, commentId: comment.id }, 'Failed to send mention notification');
       }
     }),
   );
@@ -330,9 +323,9 @@ async function notifyMentions(
  * Notify the parent thread author when someone replies.
  */
 async function notifyReply(
-  comment: IComment,
+  comment: CommentRow,
   parentAuthorId: string,
-  page: { _id: mongoose.Types.ObjectId; title: string },
+  page: { id: string; title: string },
 ): Promise<void> {
   if (parentAuthorId === comment.authorId) return;
   try {
@@ -343,15 +336,15 @@ async function notifyReply(
       body: comment.content.plainText.slice(0, 280),
       priority: 'normal',
       data: {
-        commentId: String(comment._id),
-        pageId: String(page._id),
+        commentId: comment.id,
+        pageId: page.id,
         blockId: comment.blockId ? String(comment.blockId) : null,
         parentCommentId: comment.parentCommentId ? String(comment.parentCommentId) : null,
         authorId: comment.authorId,
       },
     });
   } catch (err: unknown) {
-    log.general.warn({ err, userId: parentAuthorId, commentId: String(comment._id) }, 'Failed to send reply notification');
+    log.general.warn({ err, userId: parentAuthorId, commentId: comment.id }, 'Failed to send reply notification');
   }
 }
 
@@ -368,7 +361,8 @@ router.get('/pages/:pageId/comments', async (req: Request, res: Response) => {
       .parse(req.query);
     const includeResolved = query.includeResolved === 'true';
 
-    const page = await Page.findById(params.pageId).select('workspaceId').lean();
+    const db = getDb();
+    const page = await findPageById(db, params.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -380,9 +374,7 @@ router.get('/pages/:pageId/comments', async (req: Request, res: Response) => {
     // Thread listing: when hiding resolved threads we still need replies to
     // be returned (clients group by parentCommentId), so we fetch all and
     // filter the resolved-root threads in memory.
-    const all = await Comment.find({ pageId: page._id })
-      .sort({ createdAt: 1 })
-      .lean();
+    const all = await listCommentsByPage(db, page.id);
 
     if (includeResolved) {
       res.json({ comments: all.map((c) => serializeComment(c)) });
@@ -394,10 +386,10 @@ router.get('/pages/:pageId/comments', async (req: Request, res: Response) => {
     const resolvedTopIds = new Set(
       all
         .filter((c) => c.parentCommentId === null && c.resolvedAt !== null)
-        .map((c) => String(c._id)),
+        .map((c) => c.id),
     );
     const filtered = all.filter((c) => {
-      const rootId = c.parentCommentId ? String(c.parentCommentId) : String(c._id);
+      const rootId = c.parentCommentId ?? c.id;
       return !resolvedTopIds.has(rootId);
     });
 
@@ -418,13 +410,14 @@ router.get('/blocks/:blockId/comments', async (req: Request, res: Response) => {
   try {
     const params = z.object({ blockId: objectIdSchema }).parse(req.params);
 
-    const block = await Block.findById(params.blockId).select('pageId').lean();
+    const db = getDb();
+    const block = await findBlockById(db, params.blockId);
     if (!block) {
       res.status(404).json({ error: 'Block not found' });
       return;
     }
 
-    const page = await Page.findById(block.pageId).select('workspaceId').lean();
+    const page = await findPageById(db, block.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -433,9 +426,7 @@ router.get('/blocks/:blockId/comments', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, page.workspaceId);
     if (!ok) return;
 
-    const comments = await Comment.find({ blockId: block._id })
-      .sort({ createdAt: 1 })
-      .lean();
+    const comments = await listCommentsByBlock(db, block.id);
 
     res.json({ comments: comments.map((c) => serializeComment(c)) });
   } catch (error: unknown) {
@@ -458,9 +449,8 @@ router.post('/pages/:pageId/comments', async (req: Request, res: Response) => {
     const params = z.object({ pageId: objectIdSchema }).parse(req.params);
     const body = createBodySchema.parse(req.body);
 
-    const page = await Page.findById(params.pageId)
-      .select('workspaceId title')
-      .lean();
+    const db = getDb();
+    const page = await findPageById(db, params.pageId);
     if (!page) {
       res.status(404).json({ error: 'Page not found' });
       return;
@@ -470,33 +460,31 @@ router.post('/pages/:pageId/comments', async (req: Request, res: Response) => {
     if (!ok) return;
 
     // Validate block belongs to the same page (if provided).
-    let blockObjId: mongoose.Types.ObjectId | null = null;
+    let blockId: string | null = null;
     if (body.blockId) {
-      const block = await Block.findById(body.blockId).select('pageId').lean();
+      const block = await findBlockById(db, body.blockId);
       if (!block) {
         res.status(404).json({ error: 'Block not found' });
         return;
       }
-      if (String(block.pageId) !== String(page._id)) {
+      if (block.pageId !== page.id) {
         res.status(400).json({ error: 'Block belongs to a different page' });
         return;
       }
-      blockObjId = block._id as mongoose.Types.ObjectId;
+      blockId = block.id;
     }
 
     // Validate parent comment belongs to the same page and is a top-level
     // comment (one-level reply nesting only).
-    let parentObjId: mongoose.Types.ObjectId | null = null;
+    let parentCommentId: string | null = null;
     let parentAuthorId: string | null = null;
     if (body.parentCommentId) {
-      const parent = await Comment.findById(body.parentCommentId)
-        .select('pageId parentCommentId authorId')
-        .lean();
+      const parent = await findCommentById(db, body.parentCommentId);
       if (!parent) {
         res.status(404).json({ error: 'Parent comment not found' });
         return;
       }
-      if (String(parent.pageId) !== String(page._id)) {
+      if (parent.pageId !== page.id) {
         res.status(400).json({ error: 'Parent comment belongs to a different page' });
         return;
       }
@@ -506,13 +494,13 @@ router.post('/pages/:pageId/comments', async (req: Request, res: Response) => {
           .json({ error: 'Replies can only target top-level comments' });
         return;
       }
-      parentObjId = parent._id as mongoose.Types.ObjectId;
+      parentCommentId = parent.id;
       parentAuthorId = parent.authorId;
     }
 
     const { segments, mentionedUserIds } = await validateAndNormalizeContent(
       body.content.segments,
-      page.workspaceId as mongoose.Types.ObjectId,
+      page.workspaceId,
     );
 
     const content: CommentContent = {
@@ -520,25 +508,19 @@ router.post('/pages/:pageId/comments', async (req: Request, res: Response) => {
       plainText: flattenSegments(segments),
     };
 
-    const comment = await Comment.create({
+    const comment = await createComment(db, {
       workspaceId: page.workspaceId,
-      pageId: page._id,
-      blockId: blockObjId,
-      parentCommentId: parentObjId,
+      pageId: page.id,
+      blockId,
+      parentCommentId,
       authorId: req.user.id,
       content,
     });
 
     // Notifications: fan-out non-blocking. Errors logged inside the helpers.
-    void notifyMentions(comment, mentionedUserIds, {
-      _id: page._id as mongoose.Types.ObjectId,
-      title: page.title,
-    });
+    void notifyMentions(comment, mentionedUserIds, { id: page.id, title: page.title });
     if (parentAuthorId) {
-      void notifyReply(comment, parentAuthorId, {
-        _id: page._id as mongoose.Types.ObjectId,
-        title: page.title,
-      });
+      void notifyReply(comment, parentAuthorId, { id: page.id, title: page.title });
     }
 
     res.status(201).json({ comment: serializeComment(comment) });
@@ -562,7 +544,8 @@ router.patch('/comments/:id', async (req: Request, res: Response) => {
     const params = z.object({ id: objectIdSchema }).parse(req.params);
     const body = updateBodySchema.parse(req.body);
 
-    const comment = await Comment.findById(params.id);
+    const db = getDb();
+    const comment = await findCommentById(db, params.id);
     if (!comment) {
       res.status(404).json({ error: 'Comment not found' });
       return;
@@ -589,14 +572,19 @@ router.patch('/comments/:id', async (req: Request, res: Response) => {
       comment.workspaceId,
     );
 
-    comment.content = {
-      segments,
-      plainText: flattenSegments(segments),
-    };
-    comment.editedAt = new Date();
-    await comment.save();
+    const updated = await updateCommentContent(
+      db,
+      comment.id,
+      { segments, plainText: flattenSegments(segments) },
+      new Date(),
+    );
+    if (!updated) {
+      // Deleted between the read above and the write. Same answer as a miss.
+      res.status(404).json({ error: 'Comment not found' });
+      return;
+    }
 
-    res.json({ comment: serializeComment(comment) });
+    res.json({ comment: serializeComment(updated) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to update comment');
@@ -612,7 +600,8 @@ router.post('/comments/:id/resolve', async (req: Request, res: Response) => {
   try {
     const params = z.object({ id: objectIdSchema }).parse(req.params);
 
-    const comment = await Comment.findById(params.id);
+    const db = getDb();
+    const comment = await findCommentById(db, params.id);
     if (!comment) {
       res.status(404).json({ error: 'Comment not found' });
       return;
@@ -625,12 +614,15 @@ router.post('/comments/:id/resolve', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, comment.workspaceId);
     if (!ok) return;
 
-    if (comment.resolvedAt === null) {
-      comment.resolvedAt = new Date();
-      await comment.save();
-    }
+    // Already-resolved is not an error and not a write: the repository's
+    // guard is in the WHERE clause, so a null means "already resolved" and the
+    // row we read is the answer.
+    const resolved =
+      comment.resolvedAt === null
+        ? await setCommentResolvedAt(db, comment.id, new Date())
+        : null;
 
-    res.json({ comment: serializeComment(comment) });
+    res.json({ comment: serializeComment(resolved ?? comment) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to resolve comment');
@@ -646,7 +638,8 @@ router.post('/comments/:id/unresolve', async (req: Request, res: Response) => {
   try {
     const params = z.object({ id: objectIdSchema }).parse(req.params);
 
-    const comment = await Comment.findById(params.id);
+    const db = getDb();
+    const comment = await findCommentById(db, params.id);
     if (!comment) {
       res.status(404).json({ error: 'Comment not found' });
       return;
@@ -659,12 +652,10 @@ router.post('/comments/:id/unresolve', async (req: Request, res: Response) => {
     const ok = await checkWorkspaceMembership(req, res, comment.workspaceId);
     if (!ok) return;
 
-    if (comment.resolvedAt !== null) {
-      comment.resolvedAt = null;
-      await comment.save();
-    }
+    const unresolved =
+      comment.resolvedAt !== null ? await setCommentResolvedAt(db, comment.id, null) : null;
 
-    res.json({ comment: serializeComment(comment) });
+    res.json({ comment: serializeComment(unresolved ?? comment) });
   } catch (error: unknown) {
     if (handleZodError(error, res)) return;
     log.general.error({ err: error }, 'Failed to unresolve comment');
@@ -685,7 +676,8 @@ router.delete('/comments/:id', async (req: Request, res: Response) => {
     }
     const params = z.object({ id: objectIdSchema }).parse(req.params);
 
-    const comment = await Comment.findById(params.id);
+    const db = getDb();
+    const comment = await findCommentById(db, params.id);
     if (!comment) {
       res.status(404).json({ error: 'Comment not found' });
       return;
@@ -704,11 +696,9 @@ router.delete('/comments/:id', async (req: Request, res: Response) => {
 
     // Cascade replies when deleting a top-level thread.
     if (comment.parentCommentId === null) {
-      await Comment.deleteMany({
-        $or: [{ _id: comment._id }, { parentCommentId: comment._id }],
-      });
+      await deleteCommentThread(db, comment.id);
     } else {
-      await Comment.deleteOne({ _id: comment._id });
+      await deleteComment(db, comment.id);
     }
 
     res.json({ success: true });

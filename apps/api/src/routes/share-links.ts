@@ -1,16 +1,20 @@
 import { Router, type Request, type Response } from 'express';
 import crypto from 'crypto';
-import mongoose, { type HydratedDocument } from 'mongoose';
 import { z } from 'zod';
 import { authenticateToken } from '../middleware/auth.js';
-import { Page, type IPage } from '../models/page.js';
-import { Block } from '../models/block.js';
-import { WorkspaceMember, hasRole } from '../models/workspace-member.js';
+import { getDb } from '../db/client.js';
+import { hasRole } from '../db/schema/workspaces.js';
+import { SHARE_LINK_SCOPES, type ShareLinkScope } from '../db/schema/collab.js';
+import { listBlocksForPageByOrder } from '../repositories/blocks.js';
+import { findPageById, type PageRow } from '../repositories/pages.js';
 import {
-  ShareLink,
-  SHARE_LINK_SCOPES,
-  type ShareLinkScope,
-} from '../models/share-link.js';
+  createShareLink,
+  findShareLinkById,
+  findShareLinkByToken,
+  listActiveShareLinksByPage,
+  revokeShareLink,
+} from '../repositories/shareLinks.js';
+import { findMembership } from '../repositories/workspaces.js';
 import { log } from '../lib/logger.js';
 
 const router = Router();
@@ -47,7 +51,7 @@ function paramString(value: unknown): string | null {
   return null;
 }
 
-type LoadedPage = HydratedDocument<IPage>;
+type LoadedPage = PageRow;
 
 /**
  * Asserts the caller is a member of the workspace owning `pageId` with at
@@ -65,21 +69,21 @@ async function authorizePageForShareManagement(
   }
 
   const pageId = paramString(pageIdRaw);
-  if (!pageId || !mongoose.isValidObjectId(pageId)) {
+  if (!pageId) {
     res.status(400).json({ error: 'Invalid page id' });
     return null;
   }
 
-  const page = await Page.findById(pageId);
+  // No 24-hex shape gate: it rejected every uuidv7 the schema now produces. A
+  // malformed id matches no row and falls through to the 404 below.
+  const db = getDb();
+  const page = await findPageById(db, pageId);
   if (!page) {
     res.status(404).json({ error: 'Page not found' });
     return null;
   }
 
-  const member = await WorkspaceMember.findOne({
-    workspaceId: page.workspaceId,
-    userId: req.user.id,
-  });
+  const member = await findMembership(db, page.workspaceId, req.user.id);
 
   if (!member) {
     res.status(403).json({ error: 'Forbidden: not a workspace member' });
@@ -130,31 +134,26 @@ router.post(
       // Up to a few retries in the extremely unlikely event of a token
       // collision. base64url(24) gives 192 bits of entropy; collisions are
       // not expected in practice.
-      let saved = false;
+      // `createShareLink` uses ON CONFLICT DO NOTHING RETURNING, so a token
+      // collision comes back as null rather than as an exception. That is the
+      // whole point: the ported `code === 11000` catch could not tell a
+      // collision from a dropped connection, and would have retried — with a
+      // fresh token — against an infrastructure failure. Here a real failure
+      // still throws out of the loop.
+      let link: Awaited<ReturnType<typeof createShareLink>> = null;
       let attempts = 0;
-      const link = new ShareLink({
-        pageId: page._id,
-        token: '',
-        scope: parsed.data.scope,
-        createdBy: userId,
-        expiresAt,
-        revokedAt: null,
-      });
-
-      while (!saved && attempts < 5) {
+      while (!link && attempts < 5) {
         attempts++;
-        link.token = generateToken();
-        try {
-          await link.save();
-          saved = true;
-        } catch (createErr: unknown) {
-          const code = (createErr as { code?: number } | null)?.code;
-          if (code !== 11000) throw createErr;
-          link.isNew = true;
-        }
+        link = await createShareLink(getDb(), {
+          pageId: page.id,
+          token: generateToken(),
+          scope: parsed.data.scope,
+          createdBy: userId,
+          expiresAt,
+        });
       }
 
-      if (!saved) {
+      if (!link) {
         log.general.error({ pageId: page.id }, 'Failed to generate unique share token');
         res.status(500).json({ error: 'Failed to generate share link' });
         return;
@@ -194,18 +193,11 @@ router.get(
       if (!auth) return;
       const { page } = auth;
 
-      const now = new Date();
-      const links = await ShareLink.find({
-        pageId: page._id,
-        revokedAt: null,
-        $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
-      })
-        .sort({ createdAt: -1 })
-        .lean();
+      const links = await listActiveShareLinksByPage(getDb(), page.id, new Date());
 
       res.json({
         shareLinks: links.map((l) => ({
-          id: String(l._id),
+          id: l.id,
           token: l.token,
           url: shareLinkPublicUrl(l.token),
           scope: l.scope,
@@ -238,12 +230,13 @@ router.delete(
       }
 
       const id = paramString(req.params.id);
-      if (!id || !mongoose.isValidObjectId(id)) {
+      if (!id) {
         res.status(400).json({ error: 'Invalid share link id' });
         return;
       }
 
-      const link = await ShareLink.findById(id);
+      const db = getDb();
+      const link = await findShareLinkById(db, id);
       if (!link) {
         res.status(404).json({ error: 'Share link not found' });
         return;
@@ -257,16 +250,13 @@ router.delete(
       const isCreator = link.createdBy === req.user.id;
       let isWorkspaceAdmin = false;
       if (!isCreator) {
-        const page = await Page.findById(link.pageId);
+        const page = await findPageById(db, link.pageId);
         if (!page) {
           // Page already gone; allow workspace-less revoke only by creator.
           res.status(404).json({ error: 'Linked page not found' });
           return;
         }
-        const member = await WorkspaceMember.findOne({
-          workspaceId: page.workspaceId,
-          userId: req.user.id,
-        });
+        const member = await findMembership(db, page.workspaceId, req.user.id);
         isWorkspaceAdmin = !!member && hasRole(member.role, 'admin');
       }
 
@@ -275,9 +265,11 @@ router.delete(
         return;
       }
 
-      link.revokedAt = new Date();
-      await link.save();
-      res.json({ success: true, revokedAt: link.revokedAt });
+      // `revokeShareLink` only stamps a link that is not already revoked, so a
+      // null here means someone revoked it between the read above and now. That
+      // is the same answer the early return gives, not an error.
+      const revoked = await revokeShareLink(db, link.id, new Date());
+      res.json({ success: true, revokedAt: revoked?.revokedAt ?? link.revokedAt, alreadyRevoked: !revoked });
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to revoke share link');
       res.status(500).json({ error: 'Failed to revoke share link' });
@@ -299,7 +291,8 @@ router.get('/share/:token', async (req: Request, res: Response) => {
       return;
     }
 
-    const link = await ShareLink.findOne({ token });
+    const db = getDb();
+    const link = await findShareLinkByToken(db, token);
     if (!link) {
       res.status(404).json({ error: 'Share link not found' });
       return;
@@ -313,15 +306,15 @@ router.get('/share/:token', async (req: Request, res: Response) => {
       return;
     }
 
-    const page = await Page.findById(link.pageId);
+    const page = await findPageById(db, link.pageId);
     if (!page || page.archived) {
       res.status(404).json({ error: 'Shared page is no longer available' });
       return;
     }
 
-    const blocks = await Block.find({ pageId: page._id })
-      .sort({ order: 1 })
-      .lean();
+    // Ordering lives in the repository (`...ByOrder`) rather than in a chained
+    // `.sort()` here, so every reader of a page's blocks gets the same order.
+    const blocks = await listBlocksForPageByOrder(db, page.id);
 
     res.json({
       page: {
@@ -334,7 +327,7 @@ router.get('/share/:token', async (req: Request, res: Response) => {
         updatedAt: page.updatedAt,
       },
       blocks: blocks.map((b) => ({
-        id: String(b._id),
+        id: b.id,
         pageId: String(b.pageId),
         parentBlockId: b.parentBlockId ? String(b.parentBlockId) : null,
         type: b.type,

@@ -13,7 +13,7 @@ import {
 import { databaseViews, databases } from '../db/schema/databases.js';
 import { blocks, pages } from '../db/schema/pages.js';
 import { closeDb } from '../db/client.js';
-import type { WorkspaceRole } from '../models/workspace-member.js';
+import type { WorkspaceRole } from '../db/schema/workspaces.js';
 
 /**
  * `routes/databases.ts` against a real Postgres, driven over HTTP.
