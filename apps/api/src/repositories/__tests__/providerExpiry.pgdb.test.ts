@@ -80,6 +80,10 @@ describe('the registry', () => {
    *
    *   `internal/providers/models/fallback-event.ts:46` — 30 * 24 * 60 * 60
    *   `src/lib/auth-health.ts:53`                      — 7 * 24 * 60 * 60
+   *
+   * The first file is DELETED as of the providers rewiring; read it at f7834e8.
+   * The number stays pinned here precisely because its source is now historical
+   * — nothing recomputes it, so this assertion is what preserves it.
    */
   it('names exactly this domain’s two TTL indexes, at the source’s retentions', () => {
     expect(PROVIDER_EXPIRY_TARGETS).toHaveLength(2);
@@ -103,8 +107,9 @@ describe('the registry', () => {
 
   /**
    * `api_usages` is NOT a target, and this is the assertion that keeps it that
-   * way. `internal/providers/models/api-usage.ts` declares no
-   * `expireAfterSeconds`; the 90-day TTL that looks like it belongs to it is on
+   * way. `internal/providers/models/api-usage.ts` declared no
+   * `expireAfterSeconds` (that file is DELETED as of the providers rewiring —
+   * read it at f7834e8); the 90-day TTL that looks like it belongs to it is on
    * the billing domain's `api_key_usage`, which does have one. Adding
    * a retention on that resemblance would start deleting rows nobody agreed to
    * delete.

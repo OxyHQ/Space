@@ -5,21 +5,23 @@
  */
 
 import { broadcast } from '../ws';
-import { ProviderKey } from '../models/provider-key';
-import { ModelConfig } from '../models/model-config';
-import { ClarityModel } from '../models/clarity-model';
-import { Plan } from '../models/plan';
-import { CreditPackage } from '../models/credit-package';
-import { Feature } from '../models/feature';
-import { PlanFeature } from '../models/plan-feature';
+import { getDb } from '../../../db/client.js';
+import { listAllPublic } from '../../../repositories/provider-keys.js';
+import { listModels as listModelConfigs } from '../../../repositories/model-configs.js';
+import { listModels as listClarityModels } from '../../../repositories/clarity-models.js';
+import { listPlans } from '../../../repositories/plans.js';
+import { listPackages } from '../../../repositories/credit-packages.js';
+import { listFeatures } from '../../../repositories/features.js';
+import { listMappings } from '../../../repositories/plan-features.js';
 import { getAllProviderHealth, getProviderHealth } from './provider-health';
 import { log } from '../../../lib/logger.js';
 
 export async function broadcastKeysUpdate(provider: string): Promise<void> {
   try {
-    const allKeys = await ProviderKey.find({})
-      .select('-keyHash -key')
-      .sort({ provider: 1, priority: 1 });
+    // `listAllPublic` projects `PUBLIC_COLUMNS`, which is the port of the
+    // source's `.select('-keyHash -key')` — the secret and its digest never
+    // reach a socket subscriber.
+    const allKeys = await listAllPublic(getDb());
     broadcast('keys:all', { success: true, count: allKeys.length, data: allKeys });
 
     const providerKeys = allKeys.filter(k => k.provider === provider);
@@ -31,7 +33,7 @@ export async function broadcastKeysUpdate(provider: string): Promise<void> {
 
 export async function broadcastModelsUpdate(provider: string): Promise<void> {
   try {
-    const allModels = await ModelConfig.find({}).sort({ provider: 1, priority: 1 });
+    const allModels = await listModelConfigs(getDb());
     broadcast('models:all', { success: true, count: allModels.length, data: allModels });
 
     const providerModels = allModels.filter(m => m.provider === provider);
@@ -43,7 +45,7 @@ export async function broadcastModelsUpdate(provider: string): Promise<void> {
 
 export async function broadcastClarityModelsUpdate(): Promise<void> {
   try {
-    const models = await ClarityModel.find({}).sort({ tier: 1, clarityModelId: 1 });
+    const models = await listClarityModels(getDb());
     broadcast('clarity-models:all', { success: true, count: models.length, data: models });
   } catch (error) {
     log.providers.error({ err: error }, 'Error broadcasting clarity-models update');
@@ -52,7 +54,7 @@ export async function broadcastClarityModelsUpdate(): Promise<void> {
 
 export async function broadcastPlansUpdate(): Promise<void> {
   try {
-    const plans = await Plan.find({}).sort({ product: 1, sortOrder: 1 }).lean();
+    const plans = await listPlans(getDb());
     broadcast('plans:all', { success: true, count: plans.length, data: plans });
   } catch (error) {
     log.providers.error({ err: error }, 'Error broadcasting plans update');
@@ -61,7 +63,7 @@ export async function broadcastPlansUpdate(): Promise<void> {
 
 export async function broadcastCreditPackagesUpdate(): Promise<void> {
   try {
-    const packages = await CreditPackage.find({}).sort({ sortOrder: 1 }).lean();
+    const packages = await listPackages(getDb());
     broadcast('credit-packages:all', { success: true, count: packages.length, data: packages });
   } catch (error) {
     log.providers.error({ err: error }, 'Error broadcasting credit-packages update');
@@ -70,7 +72,7 @@ export async function broadcastCreditPackagesUpdate(): Promise<void> {
 
 export async function broadcastFeaturesUpdate(): Promise<void> {
   try {
-    const features = await Feature.find({}).sort({ category: 1, sortOrder: 1 }).lean();
+    const features = await listFeatures(getDb());
     broadcast('features:all', { success: true, count: features.length, data: features });
   } catch (error) {
     log.providers.error({ err: error }, 'Error broadcasting features update');
@@ -79,7 +81,7 @@ export async function broadcastFeaturesUpdate(): Promise<void> {
 
 export async function broadcastPlanFeaturesUpdate(): Promise<void> {
   try {
-    const mappings = await PlanFeature.find({}).lean();
+    const mappings = await listMappings(getDb());
     broadcast('plan-features:all', { success: true, count: mappings.length, data: mappings });
   } catch (error) {
     log.providers.error({ err: error }, 'Error broadcasting plan-features update');

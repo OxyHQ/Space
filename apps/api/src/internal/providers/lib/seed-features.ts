@@ -1,17 +1,19 @@
 /**
- * Seed Feature and PlanFeature collections.
+ * Seed the `features` and `plan_features` tables.
  * Features define the canonical set of capabilities.
  * PlanFeatures map which features each plan includes.
  *
- * Uses $setOnInsert for features (admin can edit labels later).
- * PlanFeature mappings are always overwritten from code (source of truth).
+ * BOTH are insert-only: an existing row is left exactly as it is, so an
+ * operator's edits survive a re-run. The previous version of this comment said
+ * mappings were "always overwritten from code (source of truth)", which the
+ * code has never done — its update document is `$setOnInsert` only, and
+ * overwriting would revert every hand-made change on the next boot.
  */
 
-import { Feature } from '../models/feature.js';
-import { PlanFeature } from '../models/plan-feature.js';
-import { connectDB } from './db.js';
+import { getDb } from '../../../db/client.js';
+import { seedFeature } from '../../../repositories/features.js';
+import { seedMappings } from '../../../repositories/plan-features.js';
 import { log } from '../../../lib/logger.js';
-import { isDuplicateKeyError } from '../../../lib/errors/index.js';
 
 // ─── Feature seed data ──────────────────────────────────────
 
@@ -239,40 +241,35 @@ const PLAN_FEATURES: PlanFeatureSeed[] = [
 // ─── Seed functions ──────────────────────────────────────────
 
 export async function seedFeatures(): Promise<{ seeded: number; skipped: number }> {
-  await connectDB();
+  const db = getDb();
 
   let seeded = 0;
   let skipped = 0;
 
   for (const f of FEATURES) {
     try {
-      const result = await Feature.updateOne(
-        { featureId: f.featureId },
-        {
-          $setOnInsert: {
-            label: f.label,
-            description: f.description,
-            category: f.category,
-            featureType: f.featureType,
-            sortOrder: f.sortOrder,
-            isVisibleOnPricing: f.isVisibleOnPricing,
-            isActive: true,
-          },
-        },
-        { upsert: true }
-      );
+      // `ON CONFLICT DO NOTHING RETURNING` — an empty result IS "already
+      // seeded". The source's duplicate-key catch reached the same conclusion
+      // by way of an exception, which on Postgres cannot tell a duplicate from
+      // a dropped connection.
+      const inserted = await seedFeature(db, {
+        featureId: f.featureId,
+        label: f.label,
+        description: f.description,
+        category: f.category,
+        featureType: f.featureType,
+        sortOrder: f.sortOrder,
+        isVisibleOnPricing: f.isVisibleOnPricing,
+        isActive: true,
+      });
 
-      if (result.upsertedCount > 0) {
+      if (inserted) {
         seeded++;
       } else {
         skipped++;
       }
     } catch (error: unknown) {
-      if (isDuplicateKeyError(error)) {
-        skipped++;
-      } else {
-        log.seed.error({ err: error, featureId: f.featureId }, 'Error seeding feature');
-      }
+      log.seed.error({ err: error, featureId: f.featureId }, 'Error seeding feature');
     }
   }
 
@@ -281,25 +278,23 @@ export async function seedFeatures(): Promise<{ seeded: number; skipped: number 
 }
 
 export async function seedPlanFeatures(): Promise<{ upserted: number }> {
-  await connectDB();
+  // One multi-row `INSERT ... ON CONFLICT DO NOTHING RETURNING`, which is the
+  // port of the `bulkWrite` batch: the count of returned rows is exactly
+  // `upsertedCount`. Batching is safe HERE, unlike the matrix editor's bulk
+  // save, precisely because nothing is updated on conflict — there is no
+  // `excluded` to flatten a caller's omitted field into a NULL.
+  const upserted = await seedMappings(
+    getDb(),
+    PLAN_FEATURES.map((pf) => ({
+      planId: pf.planId,
+      featureId: pf.featureId,
+      enabled: pf.enabled,
+      limitValue: pf.limitValue,
+      displayLabel: pf.displayLabel,
+      displayDescription: pf.displayDescription,
+    })),
+  );
 
-  const ops = PLAN_FEATURES.map((pf) => ({
-    updateOne: {
-      filter: { planId: pf.planId, featureId: pf.featureId },
-      update: {
-        $setOnInsert: {
-          enabled: pf.enabled,
-          limitValue: pf.limitValue,
-          displayLabel: pf.displayLabel,
-          displayDescription: pf.displayDescription,
-        },
-      },
-      upsert: true,
-    },
-  }));
-
-  const result = await PlanFeature.bulkWrite(ops);
-  const upserted = result.upsertedCount;
   log.seed.info({ upserted }, 'PlanFeature seeding complete');
   return { upserted };
 }

@@ -4,9 +4,15 @@
  */
 
 import express, { Request, Response } from 'express';
-import { PlanFeature } from '../models/plan-feature.js';
-import { Feature } from '../models/feature.js';
-import { Plan } from '../models/plan.js';
+import { getDb } from '../../../db/client.js';
+import {
+  bulkUpsertMappings,
+  deleteMapping,
+  listMappings,
+  upsertMapping,
+} from '../../../repositories/plan-features.js';
+import { listFeatures } from '../../../repositories/features.js';
+import { listPlans } from '../../../repositories/plans.js';
 import { broadcastPlanFeaturesUpdate } from '../lib/broadcast-helpers.js';
 import { log } from '../../../lib/logger.js';
 
@@ -19,10 +25,10 @@ const router = express.Router();
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { planId } = req.query;
-    const query: any = {};
-    if (planId && typeof planId === 'string') query.planId = planId;
 
-    const mappings = await PlanFeature.find(query).sort({ planId: 1, featureId: 1 }).lean();
+    const mappings = await listMappings(getDb(), {
+      planId: planId && typeof planId === 'string' ? planId : undefined,
+    });
     res.json({ success: true, count: mappings.length, data: mappings });
   } catch (error: unknown) {
     log.providers.error({ err: error }, 'Error listing plan-features');
@@ -36,14 +42,15 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/matrix', async (_req: Request, res: Response) => {
   try {
+    const db = getDb();
     const [features, plans, mappings] = await Promise.all([
-      Feature.find({ isActive: true }).sort({ category: 1, sortOrder: 1 }).lean(),
-      Plan.find({ isActive: true }).sort({ product: 1, sortOrder: 1 }).lean(),
-      PlanFeature.find({}).lean(),
+      listFeatures(db, { isActive: true }),
+      listPlans(db, { isActive: true }),
+      listMappings(db),
     ]);
 
     // Build lookup: planId:featureId -> mapping
-    const mappingMap: Record<string, any> = {};
+    const mappingMap: Record<string, unknown> = {};
     for (const m of mappings) {
       mappingMap[`${m.planId}:${m.featureId}`] = m;
     }
@@ -66,23 +73,23 @@ router.get('/matrix', async (_req: Request, res: Response) => {
  * PUT /v1/plan-features/:planId/:featureId
  * Upsert a single plan-feature mapping
  */
-router.put('/:planId/:featureId', async (req: Request, res: Response) => {
+router.put('/:planId/:featureId', async (req: Request<{ planId: string; featureId: string }>, res: Response) => {
   try {
     const { planId, featureId } = req.params;
     const { enabled, limitValue, displayLabel, displayDescription } = req.body;
 
-    const mapping = await PlanFeature.findOneAndUpdate(
-      { planId, featureId },
-      {
-        $set: {
-          enabled: enabled ?? true,
-          limitValue,
-          displayLabel,
-          displayDescription,
-        },
-      },
-      { upsert: true, returnDocument: 'after', runValidators: true }
-    );
+    // A field the caller omitted arrives here as `undefined` and is dropped
+    // from the conflict branch's SET clause; an explicit `null` still clears.
+    // Writing the undefineds through would erase a feature's limit and its
+    // display overrides on a request that only meant to toggle `enabled`.
+    const mapping = await upsertMapping(getDb(), {
+      planId,
+      featureId,
+      enabled: enabled ?? true,
+      limitValue,
+      displayLabel,
+      displayDescription,
+    });
 
     res.json({ success: true, data: mapping });
     broadcastPlanFeaturesUpdate();
@@ -104,28 +111,27 @@ router.post('/bulk', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'mappings must be an array', code: 'INVALID_REQUEST' });
     }
 
-    const ops = mappings.map((m: any) => ({
-      updateOne: {
-        filter: { planId: m.planId, featureId: m.featureId },
-        update: {
-          $set: {
-            enabled: m.enabled ?? true,
-            limitValue: m.limitValue,
-            displayLabel: m.displayLabel,
-            displayDescription: m.displayDescription,
-          },
-        },
-        upsert: true,
-      },
-    }));
-
-    const result = await PlanFeature.bulkWrite(ops);
+    // One transaction, N per-row upserts — the port of Mongo's `bulkWrite`
+    // batch. A half-applied matrix is a pricing page that disagrees with
+    // itself, and the `upserted`/`modified` pair the editor displays would be a
+    // lie about a partial write.
+    const result = await bulkUpsertMappings(
+      getDb(),
+      (mappings as Record<string, unknown>[]).map((m) => ({
+        planId: m.planId as string,
+        featureId: m.featureId as string,
+        enabled: (m.enabled as boolean | undefined) ?? true,
+        limitValue: m.limitValue as number | null | undefined,
+        displayLabel: m.displayLabel as string | null | undefined,
+        displayDescription: m.displayDescription as string | null | undefined,
+      })),
+    );
 
     res.json({
       success: true,
-      upserted: result.upsertedCount,
-      modified: result.modifiedCount,
-      total: ops.length,
+      upserted: result.upserted,
+      modified: result.modified,
+      total: result.total,
     });
     broadcastPlanFeaturesUpdate();
   } catch (error: unknown) {
@@ -138,10 +144,10 @@ router.post('/bulk', async (req: Request, res: Response) => {
  * DELETE /v1/plan-features/:planId/:featureId
  * Remove a single plan-feature mapping
  */
-router.delete('/:planId/:featureId', async (req: Request, res: Response) => {
+router.delete('/:planId/:featureId', async (req: Request<{ planId: string; featureId: string }>, res: Response) => {
   try {
     const { planId, featureId } = req.params;
-    const result = await PlanFeature.findOneAndDelete({ planId, featureId });
+    const result = await deleteMapping(getDb(), planId, featureId);
     if (!result) {
       return res.status(404).json({ success: false, error: 'Mapping not found', code: 'MAPPING_NOT_FOUND' });
     }

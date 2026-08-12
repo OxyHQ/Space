@@ -27,7 +27,8 @@ import {
 } from './clarity-models';
 import { getBestKeyForModel, markKeyCreditExhausted } from './key-manager';
 import { isProviderAvailable } from './provider-health';
-import { FallbackEvent } from '../models/fallback-event';
+import { getDb } from '../../../db/client.js';
+import { recordEvent } from '../../../repositories/fallback-events.js';
 import { getErrorMessage } from '../../../lib/errors/index.js';
 import { log } from '../../../lib/logger.js';
 
@@ -370,7 +371,11 @@ function recordFallbackEvent(
     return;
   }
 
-  FallbackEvent.create({
+  // The event and its attempts were one atomic document insert and are now two
+  // statements, so the repository puts them in one transaction: an event with a
+  // truncated attempt list is worse than no event at all, because the analytics
+  // read it as a shorter fallback chain than the one that actually happened.
+  recordEvent(getDb(), {
     timestamp: new Date(),
     clarityModel,
     attempts: attempts.map((a) => ({

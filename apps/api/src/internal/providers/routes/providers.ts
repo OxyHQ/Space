@@ -13,9 +13,11 @@ import {
   recordSuccess,
   recordFailure,
   isProviderAvailable,
-  resetProviderHealth
+  resetProviderHealth,
+  clearHealthCache
 } from '../lib/provider-health';
-import mongoose from 'mongoose';
+import { getDb } from '../../../db/client.js';
+import { resetAll } from '../../../repositories/provider-healths.js';
 import { getBestKeyForModel, recordKeyUsage, recordKeySpend } from '../lib/key-manager';
 import { sanitizeError, getErrorMessage } from '../../../lib/errors/index.js';
 import { broadcastHealthUpdate } from '../lib/broadcast-helpers';
@@ -245,7 +247,7 @@ router.get('/health', async (req: Request, res: Response) => {
     log.providers.error({ err: error }, 'Error getting health');
     res.status(500).json({
       success: false,
-      error: getErrorMessage(error),
+      error: sanitizeError(getErrorMessage(error)),
       code: 'INTERNAL_ERROR',
     });
   }
@@ -290,7 +292,7 @@ router.post('/health/record', async (req: Request, res: Response) => {
     log.providers.error({ err: error }, 'Error recording health');
     res.status(500).json({
       success: false,
-      error: getErrorMessage(error),
+      error: sanitizeError(getErrorMessage(error)),
       code: 'INTERNAL_ERROR',
     });
   }
@@ -327,7 +329,7 @@ router.get('/available', async (req: Request, res: Response) => {
     log.providers.error({ err: error }, 'Error checking availability');
     res.status(500).json({
       success: false,
-      error: getErrorMessage(error),
+      error: sanitizeError(getErrorMessage(error)),
       code: 'INTERNAL_ERROR',
     });
   }
@@ -339,38 +341,24 @@ router.get('/available', async (req: Request, res: Response) => {
  */
 router.post('/health/reset-all', async (req: Request, res: Response) => {
   try {
-    const ProviderHealth = mongoose.models.ProviderHealth;
-    if (!ProviderHealth) {
-      return res.status(500).json({
-        success: false,
-        error: 'ProviderHealth model not available',
-        code: 'INTERNAL_ERROR',
-      });
-    }
+    // The source reached the model by BARE NAME STRING
+    // (`mongoose.models.ProviderHealth`) and 500'd when the registry had no
+    // entry. That guard is gone rather than translated: against a table it has
+    // no meaning, and "the model was not loaded" and "there was nothing to
+    // reset" were the same silent outcome.
+    //
+    // Mongo reported documents actually CHANGED and Postgres reports rows
+    // MATCHED, which would differ for a row already in the reset state — except
+    // that the update also stamps `lastHealthCheck` with a fresh instant, so
+    // every matched row is a changed row. This number is shown to an operator.
+    const resetCount = await resetAll(getDb());
 
-    const result = await ProviderHealth.updateMany(
-      {},
-      {
-        $set: {
-          successCount: 0,
-          failureCount: 0,
-          totalRequests: 0,
-          successRate: 100,
-          consecutiveFailures: 0,
-          consecutiveSuccesses: 0,
-          circuitState: 'closed',
-          circuitOpenedAt: null,
-          halfOpenAttempts: 0,
-          isHealthy: true,
-          lastHealthCheck: new Date(),
-        },
-      }
-    );
+    clearHealthCache();
 
     res.json({
       success: true,
       data: {
-        resetCount: result.modifiedCount,
+        resetCount,
         message: 'All provider health records reset to healthy state',
       },
     });
@@ -378,7 +366,7 @@ router.post('/health/reset-all', async (req: Request, res: Response) => {
     log.providers.error({ err: error }, 'Error resetting all health');
     res.status(500).json({
       success: false,
-      error: getErrorMessage(error),
+      error: sanitizeError(getErrorMessage(error)),
       code: 'INTERNAL_ERROR',
     });
   }
@@ -411,7 +399,7 @@ router.post('/health/reset', async (req: Request, res: Response) => {
     log.providers.error({ err: error }, 'Error resetting health');
     res.status(500).json({
       success: false,
-      error: getErrorMessage(error),
+      error: sanitizeError(getErrorMessage(error)),
       code: 'INTERNAL_ERROR',
     });
   }

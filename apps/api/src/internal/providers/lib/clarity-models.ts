@@ -139,7 +139,8 @@ export const CLARITY_MODELS: Record<string, ClarityModel> = {
 // Import the generated mappings with full capabilities and pricing data
 import { GENERATED_TIER_MAPPINGS } from './generate-model-mappings';
 import { isProviderAvailable } from './provider-health';
-import { ClarityModel as ClarityModelDB } from '../models/clarity-model';
+import { getDb } from '../../../db/client.js';
+import { listModels as listClarityModelRows } from '../../../repositories/clarity-models.js';
 import { log } from '../../../lib/logger.js';
 export const TIER_MODEL_MAPPINGS = GENERATED_TIER_MAPPINGS;
 
@@ -201,18 +202,18 @@ export interface ClarityModelWithAvailability extends ClarityModel {
 /**
  * Get all Clarity models with their current availability status.
  * A model is "available" if at least one provider in its tier has a healthy circuit breaker.
- * Legacy status is fetched from MongoDB (managed via admin tool).
+ * Legacy status is stored in the database (managed via admin tool).
  */
 export async function getAvailableModels(): Promise<ClarityModelWithAvailability[]> {
   const models = getAllClarityModels();
   const results: ClarityModelWithAvailability[] = [];
 
-  // Fetch legacy flags from MongoDB
-  let legacyMap = new Map<string, boolean>();
+  // Fetch legacy flags from the database
+  const legacyMap = new Map<string, boolean>();
   try {
-    const dbModels = await ClarityModelDB.find({}).select('clarityModelId isLegacy').lean();
-    for (const doc of dbModels) {
-      legacyMap.set(doc.clarityModelId, doc.isLegacy ?? false);
+    const dbModels = await listClarityModelRows(getDb());
+    for (const row of dbModels) {
+      legacyMap.set(row.clarityModelId, row.isLegacy);
     }
   } catch (err) {
     log.providers.warn({ data: err }, 'Failed to fetch legacy flags');

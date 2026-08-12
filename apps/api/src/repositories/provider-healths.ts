@@ -322,10 +322,10 @@ export async function resetOne(
  * route reports this number to an operator as "records reset", so an inflated
  * count would have been invisible and wrong.
  *
- * This route also guards on `mongoose.models.ProviderHealth` being registered
- * and 500s when it is not — a guard with no meaning against a table. The
- * rewiring must drop it rather than translate it: "the model was not loaded"
- * and "there was nothing to reset" are the same silent outcome today.
+ * That route also guarded on `mongoose.models.ProviderHealth` being registered
+ * and 500'd when it was not — a guard with no meaning against a table. The
+ * rewiring DROPPED it rather than translating it: "the model was not loaded"
+ * and "there was nothing to reset" must not stay the same silent outcome.
  */
 export async function resetAll(db: PgHandle, now: Date = new Date()): Promise<number> {
   const result = await db.update(providerHealths).set({ ...RESET_VALUES, lastHealthCheck: now });
