@@ -2,6 +2,8 @@ import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import { shareLinks } from '../../db/schema/collab.js';
+import { pages } from '../../db/schema/pages.js';
+import { workspaces } from '../../db/schema/workspaces.js';
 import {
   countShareLinksByPage,
   createShareLink,
@@ -14,15 +16,35 @@ import {
 let db: TestDatabase;
 
 const scope = testScope('sharelinks');
+const workspaceId = `${scope}-ws`;
 const pageId = `${scope}-page`;
 const createdBy = `${scope}-user`;
 
+/**
+ * `shareLinks.pageId` carries a foreign key, so every page a fixture names has
+ * to be a real row. Seeding on demand keeps each test naming its own page.
+ */
+async function seedPage(id: string): Promise<string> {
+  await db
+    .insert(pages)
+    .values({ id, workspaceId, title: `${scope} page`, ownerId: createdBy })
+    .onConflictDoNothing();
+  return id;
+}
+
 beforeAll(async () => {
   db = await getTestDb();
+  await db
+    .insert(workspaces)
+    .values({ id: workspaceId, name: `${scope} workspace`, ownerId: createdBy })
+    .onConflictDoNothing();
+  await seedPage(pageId);
 });
 
 afterAll(async () => {
   await db.delete(shareLinks).where(like(shareLinks.token, `${scope}%`));
+  // The workspace cascade reaches pages, and pages reach their share links.
+  await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
   await closeTestDb();
 });
 
@@ -130,7 +152,7 @@ describe('shareLinks repository', () => {
       await newLink({ token });
       expect(
         await createShareLink(db, {
-          pageId: `${scope}-other-page`,
+          pageId: await seedPage(`${scope}-other-page`),
           token,
           scope: 'read',
           createdBy,
@@ -144,7 +166,7 @@ describe('shareLinks repository', () => {
     const now = new Date('2026-06-01T00:00:00.000Z');
 
     it('keeps never-expiring and future-expiring links', async () => {
-      const listPage = `${scope}-active-page`;
+      const listPage = await seedPage(`${scope}-active-page`);
       const never = await newLink({ pageId: listPage, expiresAt: null });
       const future = await newLink({
         pageId: listPage,
@@ -156,7 +178,7 @@ describe('shareLinks repository', () => {
     });
 
     it('drops expired and revoked links', async () => {
-      const listPage = `${scope}-filtered-page`;
+      const listPage = await seedPage(`${scope}-filtered-page`);
       const kept = await newLink({ pageId: listPage, expiresAt: null });
       await newLink({ pageId: listPage, expiresAt: new Date('2026-05-31T23:59:59.000Z') });
       const revoked = await newLink({ pageId: listPage, expiresAt: null });
@@ -173,13 +195,13 @@ describe('shareLinks repository', () => {
      * instant, and the list would advertise a link the share endpoint 404s.
      */
     it('treats an expiry exactly at now as expired, matching the read path', async () => {
-      const listPage = `${scope}-boundary-page`;
+      const listPage = await seedPage(`${scope}-boundary-page`);
       await newLink({ pageId: listPage, expiresAt: now });
       expect(await listActiveShareLinksByPage(db, listPage, now)).toEqual([]);
     });
 
     it('is newest-first', async () => {
-      const listPage = `${scope}-order-page`;
+      const listPage = await seedPage(`${scope}-order-page`);
       const older = await newLink({ pageId: listPage });
       const newer = await newLink({ pageId: listPage });
       await db
@@ -223,7 +245,7 @@ describe('shareLinks repository', () => {
      * either way.
      */
     it('returns a number, not the string postgres.js decodes bigint into', async () => {
-      const countPage = `${scope}-count-page`;
+      const countPage = await seedPage(`${scope}-count-page`);
       await newLink({ pageId: countPage });
       await newLink({ pageId: countPage });
 

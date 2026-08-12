@@ -177,22 +177,36 @@ describe('collab schema', () => {
     });
 
     /**
-     * page_id and block_id carry NO reference yet — the `pages` and `blocks`
-     * tables are ported on a sibling branch. Asserted so that adding them is a
-     * deliberate act that fails this test first, rather than something that
-     * quietly never happens.
+     * The page and block references, and their DIFFERENT delete actions.
      *
-     * The floor beside it is what makes the absence mean anything: "no FK
-     * named page_id" is also what a query that read the wrong table reports.
+     * This asymmetry is the single most consequential decision in this schema,
+     * so it is asserted on the constraint definition rather than left to the
+     * declaration. A hard-deleted page takes its comments (they were
+     * unreachable through either list query anyway); a deleted BLOCK must not,
+     * because `DELETE /blocks/:id` is an ordinary editing action that leaves
+     * the page standing, and the page comment list selects on `page_id` — so a
+     * cascade here would silently destroy comment threads every time someone
+     * removed a paragraph.
      */
-    it('has no page/block foreign key yet, and the query could have seen one', async () => {
+    it('comments.page_id cascades from pages', async () => {
       const defs = await constraintDefs('comments');
-      const fkNames = Object.entries(defs)
-        .filter(([, def]) => def.startsWith('FOREIGN KEY'))
-        .map(([name]) => name);
-      expect(fkNames.some((n) => n.includes('page') || n.includes('block'))).toBe(false);
-      // Vacuity floor: the scan really does see this table's foreign keys.
-      expect(fkNames).toContain('comments_workspace_id_workspaces_id_fk');
+      expect(defs.comments_page_id_pages_id_fk).toBe(
+        'FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE',
+      );
+    });
+
+    it('comments.block_id NULLS rather than cascading', async () => {
+      const defs = await constraintDefs('comments');
+      expect(defs.comments_block_id_blocks_id_fk).toBe(
+        'FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE SET NULL',
+      );
+    });
+
+    it('share_links.page_id cascades from pages', async () => {
+      const defs = await constraintDefs('share_links');
+      expect(defs.share_links_page_id_pages_id_fk).toBe(
+        'FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE',
+      );
     });
   });
 

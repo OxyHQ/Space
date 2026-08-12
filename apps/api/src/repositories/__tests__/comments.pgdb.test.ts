@@ -1,8 +1,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { executeRows } from '@oxyhq/db';
+import { executeRows, isForeignKeyViolation } from '@oxyhq/db';
 import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import { comments } from '../../db/schema/collab.js';
+import { blocks, pages } from '../../db/schema/pages.js';
 import { workspaces } from '../../db/schema/workspaces.js';
 import {
   type CommentContent,
@@ -35,11 +36,30 @@ function content(plainText: string): CommentContent {
   };
 }
 
+/**
+ * Pages and blocks are REAL rows now, not synthetic ids: `comments.pageId` and
+ * `comments.blockId` carry foreign keys. A fixture that invented an id would
+ * fail the insert, which is the constraint doing its job.
+ */
+async function seedPage(id: string): Promise<string> {
+  await db
+    .insert(pages)
+    .values({ id, workspaceId, title: `${scope} page`, ownerId: authorId })
+    .onConflictDoNothing();
+  return id;
+}
+
 beforeAll(async () => {
   db = await getTestDb();
   await db
     .insert(workspaces)
     .values({ id: workspaceId, name: `${scope} workspace`, ownerId: authorId })
+    .onConflictDoNothing();
+  await seedPage(pageId);
+  await seedPage(otherPageId);
+  await db
+    .insert(blocks)
+    .values({ id: blockId, pageId, type: 'paragraph' })
     .onConflictDoNothing();
 });
 
@@ -110,7 +130,7 @@ describe('comments repository', () => {
   });
 
   it('lists a page oldest-first and does not leak another page', async () => {
-    const localPage = `${scope}-list-page`;
+    const localPage = await seedPage(`${scope}-list-page`);
     const first = await newComment({
       pageId: localPage,
       content: content('first'),
@@ -204,11 +224,56 @@ describe('comments repository', () => {
       expect(await deleteComment(db, `${scope}-nope`)).toBe(0);
       expect(await deleteCommentThread(db, `${scope}-nope`)).toBe(0);
     });
+
+    /**
+     * Deleting a PAGE takes its comments. Nothing in Mongo did this — all four
+     * hard-delete paths touched only Block and Page — but an orphan was
+     * unreachable through either list query, so collecting it changes nothing
+     * observable.
+     */
+    it('deleting a page takes its comments', async () => {
+      const doomedPage = await seedPage(`${scope}-doomed-page`);
+      const doomed = await newComment({ pageId: doomedPage, content: content('goes away') });
+      const survivor = await newComment({ content: content('different page') });
+
+      await db.delete(pages).where(eq(pages.id, doomedPage));
+
+      expect(await findCommentById(db, doomed.id)).toBeNull();
+      expect(await findCommentById(db, survivor.id)).not.toBeNull();
+    });
+
+    /**
+     * Deleting a BLOCK must NOT take its comments — the asymmetry with the page
+     * cascade above is the point, and it is the difference between a correct
+     * port and silent data loss on an everyday editing action.
+     *
+     * `DELETE /blocks/:id` removes a block while the page survives, and the
+     * page comment list selects on `pageId`, so today the comment stays
+     * visible. Under `cascade` it would vanish; under `set null` it stays
+     * visible and simply stops carrying a dangling block id.
+     */
+    it('deleting a block keeps its comments and clears the anchor', async () => {
+      const doomedBlockId = `${scope}-doomed-block`;
+      await db.insert(blocks).values({ id: doomedBlockId, pageId, type: 'paragraph' });
+      const anchored = await newComment({
+        blockId: doomedBlockId,
+        content: content('comment on a paragraph someone later deleted'),
+      });
+
+      await db.delete(blocks).where(eq(blocks.id, doomedBlockId));
+
+      const after = await findCommentById(db, anchored.id);
+      expect(after).not.toBeNull();
+      expect(after?.blockId).toBeNull();
+      expect(after?.content.plainText).toBe('comment on a paragraph someone later deleted');
+      // Still returned by the page comment list, exactly as before the port.
+      expect((await listCommentsByPage(db, pageId)).map((c) => c.id)).toContain(anchored.id);
+    });
   });
 
   describe('open thread roots', () => {
     it('excludes resolved roots and replies', async () => {
-      const localPage = `${scope}-roots-page`;
+      const localPage = await seedPage(`${scope}-roots-page`);
       const open = await newComment({ pageId: localPage, content: content('open') });
       const resolved = await newComment({ pageId: localPage, content: content('resolved') });
       await newComment({
@@ -239,6 +304,13 @@ describe('comments repository', () => {
   });
 
   describe('constraints', () => {
+    /**
+     * Named constraints, not a bare `rejects.toThrow()`. There are now three
+     * foreign keys on this table, so an unnamed rejection would pass for the
+     * wrong reason — a test asserting "the workspace FK holds" that is actually
+     * satisfied by the page FK firing first tells you nothing about the
+     * workspace FK at all.
+     */
     it('refuses a comment whose workspace does not exist', async () => {
       await expect(
         createComment(db, {
@@ -247,7 +319,36 @@ describe('comments repository', () => {
           authorId,
           content: content('orphan'),
         }),
-      ).rejects.toThrow();
+      ).rejects.toSatisfy((error: unknown) =>
+        isForeignKeyViolation(error, 'comments_workspace_id_workspaces_id_fk'),
+      );
+    });
+
+    it('refuses a comment on a page that does not exist', async () => {
+      await expect(
+        createComment(db, {
+          workspaceId,
+          pageId: `${scope}-no-such-page`,
+          authorId,
+          content: content('orphan'),
+        }),
+      ).rejects.toSatisfy((error: unknown) =>
+        isForeignKeyViolation(error, 'comments_page_id_pages_id_fk'),
+      );
+    });
+
+    it('refuses a comment anchored to a block that does not exist', async () => {
+      await expect(
+        createComment(db, {
+          workspaceId,
+          pageId,
+          blockId: `${scope}-no-such-block`,
+          authorId,
+          content: content('orphan'),
+        }),
+      ).rejects.toSatisfy((error: unknown) =>
+        isForeignKeyViolation(error, 'comments_block_id_blocks_id_fk'),
+      );
     });
 
     it('refuses non-array segments', async () => {
