@@ -83,14 +83,34 @@ async function ensureSchemaApplied(): Promise<void> {
 
       /**
        * A generator that loaded nothing exits happily and emits nothing, which
-       * is indistinguishable from "there was nothing to do". The table count is
-       * what tells those apart, so the DDL is refused rather than partially
-       * applied when the schema did not load.
+       * is indistinguishable from "there was nothing to do". So the DDL is
+       * refused rather than partially applied when the schema did not load.
+       *
+       * The test is a SUBSET check plus a floor, not an equality against
+       * `EXPECTED_TABLES`. Equality was correct when this harness was the only
+       * thing in the schema and became wrong the moment a sibling domain
+       * landed: the module now renders every table in the service, so the
+       * count went 4 -> 34 and the guard refused the CORRECT schema, taking
+       * two files and 46 assertions down with it — silently, because a suite
+       * that fails to load reports `Tests 0 failed`, not a red assertion.
+       *
+       * The floor is what actually catches a partial load: zero rendered
+       * tables is exactly what a schema module that threw on import produces.
+       * The subset check catches the narrower case where the module loaded but
+       * this harness's own tables are missing from it.
        */
       const created = statements.filter((s) => s.startsWith('CREATE TABLE'));
-      if (created.length !== EXPECTED_TABLES.length) {
+      if (created.length === 0) {
         throw new Error(
-          `Schema generation produced ${created.length} CREATE TABLE statements, expected ${EXPECTED_TABLES.length}. The schema module did not load fully; refusing to apply a partial schema.`,
+          'Schema generation produced no CREATE TABLE statements at all. The schema module did not load; refusing to apply an empty schema.',
+        );
+      }
+      const missing = EXPECTED_TABLES.filter(
+        (table) => !created.some((statement) => statement.includes(`"${table}"`)),
+      );
+      if (missing.length > 0) {
+        throw new Error(
+          `Schema generation rendered ${created.length} tables but not ${missing.join(', ')}, which this harness's tests require. Refusing to apply a partial schema.`,
         );
       }
 
