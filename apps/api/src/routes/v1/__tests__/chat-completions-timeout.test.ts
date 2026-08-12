@@ -99,10 +99,10 @@ vi.mock('../../../models/skill.js', () => ({
   },
 }));
 
-vi.mock('../../../models/conversation.js', () => ({
-  Conversation: { findOneAndUpdate: vi.fn().mockResolvedValue({}) },
-}));
-
+// `models/conversation.js` was mocked here until the Postgres cutover deleted
+// it. `chat-completions.ts` reaches the title update through
+// `repositories/conversations.ts` now, and this suite never let the request get
+// that far, so there is nothing to double.
 vi.mock('../../../lib/prompt-loader.js', () => ({
   buildSystemPrompt: (...args: any[]) => mockBuildSystemPrompt(...args),
 }));

@@ -39,8 +39,18 @@ const SRC = fileURLToPath(new URL('../../..', import.meta.url));
 /** This file, which names every symbol it searches for. */
 const CENSUS_FILE = join('db', 'schema', '__tests__', 'aiChat.deadModels.test.ts');
 
-/** Model modules this domain owns, by file basename and exported identifier. */
-const LIVE_MODELS = { conversation: 'Conversation', message: 'Message' } as const;
+/**
+ * Model modules this domain owns.
+ *
+ * `PORTED_MODELS` were live when this census was written and are now DELETED —
+ * `routes/conversations.ts`, `lib/conversation-saver.ts`, `lib/chat-lifecycle.ts`
+ * and `routes/v1/chat-completions.ts` go through `repositories/conversations.ts`
+ * and `repositories/messages.ts`. They kept their own entry rather than being
+ * merged into `DEAD_MODELS` because the two are different facts: the dead three
+ * were never reached and still exist on disk, while these were reached by six
+ * files and no longer exist at all.
+ */
+const PORTED_MODELS = { conversation: 'Conversation', message: 'Message' } as const;
 const DEAD_MODELS = { agent: 'Agent', skill: 'Skill', 'user-memory': 'UserMemory' } as const;
 
 /**
@@ -134,20 +144,20 @@ function isOwnModule(path: string, basename: string): boolean {
  * — but they are references, and deleting the module would leave them pointing
  * at nothing.
  */
-function testDoublesFor(basename: string): string[] {
+function testDoublesIn(files: ScannedFile[], basename: string): string[] {
   const mocked = new RegExp(`vi\\.mock\\(\\s*['"][^'"]*models/${basename}\\.js['"]`);
-  return FILES.filter((f) => !isOwnModule(f.path, basename) && mocked.test(f.code)).map(
+  return files.filter((f) => !isOwnModule(f.path, basename) && mocked.test(f.code)).map(
     (f) => f.path,
   );
 }
 
-function referencesFor(basename: string, identifier: string): string[] {
+function referencesIn(files: ScannedFile[], basename: string, identifier: string): string[] {
   const staticImport = new RegExp(`from\\s+['"][^'"]*models/${basename}\\.js['"]`);
   const dynamicImport = new RegExp(`import\\(\\s*['"][^'"]*models/${basename}\\.js['"]\\s*\\)`);
   const registryLookup = new RegExp(`mongoose\\.models\\.${identifier}\\b`);
   const bareNameModel = new RegExp(`mongoose\\.model\\(\\s*['"]${identifier}['"]\\s*\\)`);
 
-  return FILES.filter(
+  return files.filter(
     (f) =>
       !isOwnModule(f.path, basename) &&
       (staticImport.test(f.code) ||
@@ -157,6 +167,25 @@ function referencesFor(basename: string, identifier: string): string[] {
   ).map((f) => f.path);
 }
 
+/**
+ * A file as the walk would have produced it, from source text held here.
+ *
+ * The synthetic control below runs the real regexes, through the real comment
+ * stripper, over files that do not exist on disk. That is what makes the
+ * control outlive its subject: the previous version proved the spellings still
+ * matched by finding `Conversation` and `Message`, and this cutover DELETED
+ * both — a positive control that names production code has a shelf life equal
+ * to that code's, and this one expired the moment its subject was ported.
+ *
+ * It shares the failure mode it is controlling for: same expressions, same
+ * `stripComments`. It does NOT cover the WALK, which is why the floor asserting
+ * `FILES` read the tree stays exactly where it was — the two assertions cover
+ * different halves and neither substitutes for the other.
+ */
+function synthetic(path: string, raw: string): ScannedFile {
+  return { path, code: stripComments(raw), raw };
+}
+
 describe('AI chat model census', () => {
   /**
    * The floor. "Zero references" and "the walk read nothing" produce identical
@@ -164,7 +193,13 @@ describe('AI chat model census', () => {
    */
   it('read the source tree it claims to have searched', () => {
     expect(FILES.length).toBeGreaterThan(150);
-    expect(FILES.map((f) => f.path)).toContain(join('models', 'conversation.ts'));
+    // Anchors chosen to outlive the port. This assertion named
+    // `models/conversation.ts` until the cutover deleted it — and it FAILED,
+    // correctly, which is the only reason the walk floor is worth having. The
+    // schema and the three models still on disk are what this census is about,
+    // so they go last of anything here.
+    expect(FILES.map((f) => f.path)).toContain(join('db', 'schema', 'aiChat.ts'));
+    expect(FILES.map((f) => f.path)).toContain(join('models', 'agent.ts'));
     expect(FILES.map((f) => f.path)).toContain(join('lib', 'user-context.ts'));
   });
 
@@ -174,57 +209,96 @@ describe('AI chat model census', () => {
    * here. If the spellings stopped matching, this fails instead of the absence
    * quietly becoming true.
    */
-  describe('positive control — the live models are found', () => {
-    it('finds every consumer of Conversation, including none that are missing', () => {
-      expect(referencesFor('conversation', LIVE_MODELS.conversation).sort()).toEqual([
-        // Not a runtime consumer: the parity test imports the model to read
-        // `schema.paths` off it. It is listed rather than filtered out, because
-        // an exemption for "test files" would also hide a real one.
-        join('db', 'schema', '__tests__', 'aiChat.columnParity.test.ts'),
-        join('lib', 'chat-lifecycle.ts'),
-        join('lib', 'conversation-saver.ts'),
-        join('routes', '__tests__', 'conversations.test.ts'),
+  /**
+   * The positive control, in the same currency as the measurement and with no
+   * subject that can be retired out from under it. Every spelling the census
+   * claims to detect is exercised against a file written here; each must be
+   * found, and a file that only NAMES the identifier in prose must not be.
+   */
+  describe('positive control — every spelling is still detected', () => {
+    const cases: Array<{ shape: string; raw: string }> = [
+      { shape: 'static import', raw: `import { Widget } from '../models/widget.js';` },
+      { shape: 'static type import', raw: `import type { Widget } from '../models/widget.js';` },
+      { shape: 'dynamic import', raw: `const { Widget } = await import('../models/widget.js');` },
+      {
+        shape: 'dynamic import, .then form',
+        raw: `void import('../models/widget.js').then(({ Widget }) => Widget);`,
+      },
+      { shape: 'registry lookup', raw: `const W = mongoose.models.Widget;` },
+      { shape: 'bare name string', raw: `const W = mongoose.model('Widget');` },
+    ];
+
+    it.each(cases)('finds a consumer written as a $shape', ({ shape, raw }) => {
+      const files = [synthetic(join('lib', 'probe.ts'), raw)];
+      expect(referencesIn(files, 'widget', 'Widget'), shape).toEqual([join('lib', 'probe.ts')]);
+    });
+
+    it('finds the vi.mock spelling, which the other patterns miss', () => {
+      const raw = `vi.mock('../../models/widget.js', () => ({ Widget: {} }));`;
+      const files = [synthetic(join('routes', '__tests__', 'probe.test.ts'), raw)];
+      expect(testDoublesIn(files, 'widget')).toEqual([
+        join('routes', '__tests__', 'probe.test.ts'),
+      ]);
+      // The discriminating half: `vi.mock` carries no `from` and no `import(`,
+      // so a file that ONLY mocks is invisible to `referencesIn`. Without this,
+      // the two functions could collapse into one and nothing would notice.
+      expect(referencesIn(files, 'widget', 'Widget')).toEqual([]);
+    });
+
+    it('does not count a file that only names the model in prose', () => {
+      const raw = [
+        '/** Widget was removed. mongoose.models.Widget is gone. */',
+        `// import { Widget } from '../models/widget.js';`,
+        'export const unrelated = 1;',
+      ].join('\n');
+      const files = [synthetic(join('lib', 'prose.ts'), raw)];
+      expect(referencesIn(files, 'widget', 'Widget')).toEqual([]);
+      // Vacuity guard on that negative: the stripper must have left the code.
+      expect(files[0].code).toContain('export const unrelated');
+    });
+  });
+
+  /**
+   * What this cutover established. `PORTED_MODELS` had six consumers between
+   * them — including one reachable ONLY through
+   * `(await import('../models/message.js')).Message.exists(...)`, the spelling
+   * no static import census sees — and now have none, because the modules are
+   * gone.
+   */
+  describe('the ported models are gone, and nothing reaches them', () => {
+    for (const [basename, identifier] of Object.entries(PORTED_MODELS)) {
+      it(`${identifier} has no module and no consumer`, () => {
+        expect(FILES.map((f) => f.path)).not.toContain(join('models', `${basename}.ts`));
+        expect(referencesIn(FILES, basename, identifier)).toEqual([]);
+        expect(testDoublesIn(FILES, basename)).toEqual([]);
+      });
+    }
+
+    /**
+     * The replacement is reached, so "no references" is a port rather than a
+     * deletion. Without this, ripping the four call sites out entirely would
+     * pass every assertion above.
+     */
+    it('the four rewired files import the repositories instead', () => {
+      for (const path of [
         join('routes', 'conversations.ts'),
-        join('routes', 'v1', 'chat-completions.ts'),
-      ]);
-    });
-
-    it('finds the vi.mock spelling, which the other four patterns miss', () => {
-      // Derived, not recalled: the first version of this census listed
-      // chat-completions-timeout.test.ts as a Conversation consumer from
-      // memory of a grep, and the measurement disagreed — `vi.mock` carries no
-      // `from` and no `import(`, so none of the first four patterns see it.
-      expect(testDoublesFor('conversation').sort()).toEqual([
-        join('routes', '__tests__', 'conversations.test.ts'),
-        join('routes', 'v1', '__tests__', 'chat-completions-timeout.test.ts'),
-      ]);
-      // The discriminating case: this suite mocks the module and does NOT
-      // import it, so it is a reference the other four patterns cannot see.
-      // (`conversations.test.ts` does both, which is why it appears in each
-      // list and proves nothing on its own.)
-      expect(referencesFor('conversation', LIVE_MODELS.conversation)).not.toContain(
-        join('routes', 'v1', '__tests__', 'chat-completions-timeout.test.ts'),
-      );
-    });
-
-    it('finds the dynamic import spelling, not just the static one', () => {
-      // lib/chat-lifecycle.ts reaches Message ONLY through
-      // `(await import('../models/message.js')).Message.exists(...)` — it has
-      // no static import of it. If the dynamic pattern broke, this file would
-      // drop out and the census would under-report by exactly the shape that
-      // is hardest to find.
-      const lifecycle = FILES.find((f) => f.path === join('lib', 'chat-lifecycle.ts'));
-      expect(lifecycle?.code).toMatch(/import\(\s*'\.\.\/models\/message\.js'\s*\)/);
-      expect(referencesFor('message', LIVE_MODELS.message)).toContain(
+        join('lib', 'conversation-saver.ts'),
         join('lib', 'chat-lifecycle.ts'),
-      );
+        join('routes', 'v1', 'chat-completions.ts'),
+      ]) {
+        const file = FILES.find((f) => f.path === path);
+        expect(file, `${path} is missing`).toBeDefined();
+        expect(file?.code, `${path} does not reach the chat repositories`).toMatch(
+          /repositories\/(conversations|messages)\.js/,
+        );
+      }
     });
   });
 
   describe('the three dead models have no consumers', () => {
     for (const [basename, identifier] of Object.entries(DEAD_MODELS)) {
       it(`${identifier} is reached by no file, under any spelling`, () => {
-        expect(referencesFor(basename, identifier)).toEqual([]);
+        expect(referencesIn(FILES, basename, identifier)).toEqual([]);
       });
     }
 
@@ -274,17 +348,20 @@ describe('AI chat model census', () => {
      */
     it('names the stale test doubles, and shows the module under test imports neither', () => {
       const timeoutSuite = join('routes', 'v1', '__tests__', 'chat-completions-timeout.test.ts');
-      expect(testDoublesFor('skill')).toEqual([timeoutSuite]);
-      expect(testDoublesFor('user-memory')).toEqual([timeoutSuite]);
-      expect(testDoublesFor('agent')).toEqual([]);
+      expect(testDoublesIn(FILES, 'skill')).toEqual([timeoutSuite]);
+      expect(testDoublesIn(FILES, 'user-memory')).toEqual([timeoutSuite]);
+      expect(testDoublesIn(FILES, 'agent')).toEqual([]);
 
       const subject = FILES.find((f) => f.path === join('routes', 'v1', 'chat-completions.ts'));
       expect(subject).toBeDefined();
-      expect(subject!.code).not.toMatch(/models\/skill\.js/);
-      expect(subject!.code).not.toMatch(/models\/user-memory\.js/);
-      // Positive control on that pair of negatives: the same file DOES import
-      // the one model it really uses, so "no match" is not "read nothing".
-      expect(subject!.code).toMatch(/models\/conversation\.js/);
+      expect(subject?.code).not.toMatch(/models\/skill\.js/);
+      expect(subject?.code).not.toMatch(/models\/user-memory\.js/);
+      // Positive control on that pair of negatives, repointed: it used to name
+      // `models/conversation.js`, which the cutover deleted — the same
+      // shelf-life problem the synthetic control above exists to avoid. The
+      // import that replaced it does the same job, and this one retires only
+      // when the title update stops going through the repository.
+      expect(subject?.code).toMatch(/repositories\/conversations\.js/);
     });
   });
 
