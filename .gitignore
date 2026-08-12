@@ -79,3 +79,6 @@ Perplexity_files/
 
 # Built API output
 apps/api/dist/
+
+# Per-agent worktrees (AGENTS.md: one worktree per agent)
+.worktrees/

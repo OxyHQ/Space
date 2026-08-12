@@ -2,7 +2,7 @@ import { eq, like, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { executeRows } from '@oxyhq/db';
 import { sweepExpiredRows } from '@oxyhq/db/expiry';
-import { openTestDatabase, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
+import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import {
   NOTIFICATION_DISMISSED_RETENTION_SECONDS,
   notifications,
@@ -21,19 +21,18 @@ import {
 } from '../notifications.js';
 
 let db: TestDatabase;
-let close: () => Promise<void>;
 
 const scope = testScope('notifications');
 const userId = `${scope}-user`;
 const otherUserId = `${scope}-other`;
 
-beforeAll(() => {
-  ({ db, close } = openTestDatabase());
+beforeAll(async () => {
+  db = await getTestDb();
 });
 
 afterAll(async () => {
   await db.delete(notifications).where(like(notifications.oxyUserId, `${scope}%`));
-  await close();
+  await closeTestDb();
 });
 
 async function newNotification(overrides: Partial<Parameters<typeof createNotification>[1]> = {}) {

@@ -1,7 +1,7 @@
 import { eq, like, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { executeRows } from '@oxyhq/db';
-import { openTestDatabase, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
+import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import { pushTokens } from '../../db/schema/collab.js';
 import {
   deactivatePushToken,
@@ -14,19 +14,18 @@ import {
 } from '../pushTokens.js';
 
 let db: TestDatabase;
-let close: () => Promise<void>;
 
 const scope = testScope('pushtokens');
 const userId = `${scope}-user`;
 const otherUserId = `${scope}-other`;
 
-beforeAll(() => {
-  ({ db, close } = openTestDatabase());
+beforeAll(async () => {
+  db = await getTestDb();
 });
 
 afterAll(async () => {
   await db.delete(pushTokens).where(like(pushTokens.oxyUserId, `${scope}%`));
-  await close();
+  await closeTestDb();
 });
 
 describe('pushTokens repository', () => {

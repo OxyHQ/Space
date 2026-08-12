@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { generateDrizzleJson, generateMigration } from 'drizzle-kit/api';
 import { createDatabase, DATABASE_CASING, type OxyDatabase } from '@oxyhq/db';
 import type postgres from 'postgres';
@@ -156,6 +156,21 @@ export async function closeTestDb(): Promise<void> {
   await handle.client.end({ timeout: 5 });
   handle = null;
   applied = null;
+}
+
+/**
+ * A per-file id prefix.
+ *
+ * Every `*.pgdb.test.ts` shares one database, so any assertion that aggregates
+ * reads sibling files' rows unless it is scoped. Three collisions in one night
+ * in a sibling repo each looked like something else: an unscoped sweep count, a
+ * duplicate key raised on a fixture, and a `count(*)` that read 2 until another
+ * file seeded four more. Scoping at the point of WRITING is what prevents it,
+ * and the pre-existing assertion is usually the bug the new file merely
+ * reveals — so the fix is to scope, never to rename the newcomer's fixtures.
+ */
+export function testScope(label: string): string {
+  return `${label}-${randomBytes(8).toString('hex')}`;
 }
 
 /**

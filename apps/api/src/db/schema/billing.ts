@@ -393,46 +393,6 @@ export const apiKeyUsage = pgTable(
 
 /* -------------------------------------------------------------- cost entries */
 
-/**
- * `lib/cost-tracker.ts:65` declares `mongoose.model('CostEntry', ...)` INLINE,
- * exports nothing, and is the sole accessor — the model nobody can import, so
- * the port needs zero call-site edits. Its live surface is one route
- * (`getGlobalCostStats`, from `internal/providers/routes/usage.ts:125`);
- * `recordCost` and every other analytics export currently has no caller at
- * all, so this table has no writer in the running system.
- */
-export const costEntries = pgTable(
-  'cost_entries',
-  {
-    id: generatedId(),
-    userId: text().notNull(),
-    sessionId: text(),
-    clarityModelId: text().notNull(),
-    actualProvider: text().notNull(),
-    actualModelId: text().notNull(),
-    inputTokens: integer().notNull(),
-    outputTokens: integer().notNull(),
-    totalTokens: integer().notNull(),
-    /**
-     * `double precision`, not `numeric`. The source is a Mongo `Number` — an
-     * IEEE double — holding an ESTIMATE of provider cost computed as
-     * `rate * (tokens / 1_000_000)` (`lib/cost-tracker.ts:86-89`), not a
-     * ledger amount. `numeric` would also make every `sum()` decode as a
-     * STRING through postgres.js while drizzle typed it `number`.
-     */
-    costUsd: doublePrecision().notNull(),
-    savedFromCache: boolean().notNull().default(false),
-    timestamp: timestamptz().notNull().defaultNow(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    index('cost_entries_user_timestamp_idx').on(t.userId, t.timestamp.desc()),
-    index('cost_entries_model_timestamp_idx').on(t.clarityModelId, t.timestamp.desc()),
-    index('cost_entries_user_model_idx').on(t.userId, t.clarityModelId),
-    index('cost_entries_session_idx').on(t.sessionId),
-  ],
-);
 
 /* ------------------------------------------------------------ developer apps */
 

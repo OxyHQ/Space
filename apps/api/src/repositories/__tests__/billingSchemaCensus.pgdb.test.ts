@@ -5,7 +5,6 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import {
   apiKeyUsage,
-  costEntries,
   developerApiKeys,
   developerApps,
   feedback,
@@ -150,27 +149,6 @@ const EXPECTED: { table: PgTable; name: string; columns: string[]; writers: stri
       'timestamp',
       'auth_type',
       'service_app',
-    ],
-  },
-  {
-    table: costEntries,
-    name: 'cost_entries',
-    writers: 'lib/cost-tracker.ts:125 (currently uncalled)',
-    columns: [
-      'id',
-      'user_id',
-      'session_id',
-      'clarity_model_id',
-      'actual_provider',
-      'actual_model_id',
-      'input_tokens',
-      'output_tokens',
-      'total_tokens',
-      'cost_usd',
-      'saved_from_cache',
-      'timestamp',
-      'created_at',
-      'updated_at',
     ],
   },
   {

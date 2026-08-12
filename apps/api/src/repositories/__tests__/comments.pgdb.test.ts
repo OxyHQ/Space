@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { executeRows } from '@oxyhq/db';
-import { openTestDatabase, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
+import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import { comments } from '../../db/schema/collab.js';
 import { workspaces } from '../../db/schema/workspaces.js';
 import {
@@ -19,7 +19,6 @@ import {
 } from '../comments.js';
 
 let db: TestDatabase;
-let close: () => Promise<void>;
 
 /** Every id this file writes carries this prefix — see `testScope`. */
 const scope = testScope('comments');
@@ -37,7 +36,7 @@ function content(plainText: string): CommentContent {
 }
 
 beforeAll(async () => {
-  ({ db, close } = openTestDatabase());
+  db = await getTestDb();
   await db
     .insert(workspaces)
     .values({ id: workspaceId, name: `${scope} workspace`, ownerId: authorId })
@@ -47,7 +46,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // The workspace cascade takes the comments with it.
   await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
-  await close();
+  await closeTestDb();
 });
 
 async function newComment(overrides: Partial<Parameters<typeof createComment>[1]> = {}) {

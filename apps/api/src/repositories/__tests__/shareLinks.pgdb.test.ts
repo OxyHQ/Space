@@ -1,6 +1,6 @@
 import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { openTestDatabase, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
+import { closeTestDb, getTestDb, type TestDatabase, testScope } from '../../db/__tests__/testDatabase.js';
 import { shareLinks } from '../../db/schema/collab.js';
 import {
   countShareLinksByPage,
@@ -12,19 +12,18 @@ import {
 } from '../shareLinks.js';
 
 let db: TestDatabase;
-let close: () => Promise<void>;
 
 const scope = testScope('sharelinks');
 const pageId = `${scope}-page`;
 const createdBy = `${scope}-user`;
 
-beforeAll(() => {
-  ({ db, close } = openTestDatabase());
+beforeAll(async () => {
+  db = await getTestDb();
 });
 
 afterAll(async () => {
   await db.delete(shareLinks).where(like(shareLinks.token, `${scope}%`));
-  await close();
+  await closeTestDb();
 });
 
 async function newLink(overrides: Partial<Parameters<typeof createShareLink>[1]> = {}) {

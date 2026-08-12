@@ -15,17 +15,16 @@
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { executeRows } from '@oxyhq/db';
-import { openTestDatabase, type TestDatabase, testScope } from './testDatabase.js';
+import { closeTestDb, getTestDb, type TestDatabase, testScope } from './testDatabase.js';
 
 let db: TestDatabase;
-let close: () => Promise<void>;
 
-beforeAll(() => {
-  ({ db, close } = openTestDatabase());
+beforeAll(async () => {
+  db = await getTestDb();
 });
 
 afterAll(async () => {
-  await close();
+  await closeTestDb();
 });
 
 const TABLES = [
