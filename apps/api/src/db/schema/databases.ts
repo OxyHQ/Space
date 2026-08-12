@@ -289,11 +289,48 @@ export const databases = pgTable(
      * DELIBERATELY carries no `.references(() => pages.id)` yet: the `pages`
      * table is ported in a sibling change and does not exist in this schema
      * folder at the time of writing, so declaring the reference here would not
-     * compile. The foreign key (and the matching one on `pages.databaseId`)
-     * belongs in the integration commit that first has both tables. Whoever
-     * adds them must verify the result against `pg_constraint` rather than the
-     * declaration: a circular column-level reference has been silently dropped
-     * from both a generated migration and its snapshot before.
+     * compile. The foreign key belongs in the integration commit that first
+     * has both tables. Two things that commit must get right:
+     *
+     * ## It must be SET NULL, and that is a choice about the PAIR
+     *
+     * `databases.parentPageId -> pages.id` ON DELETE **SET NULL**, paired with
+     * `pages.databaseId -> databases.id` ON DELETE **CASCADE**. Neither line is
+     * safe to review on its own — the hazard is the interaction, so a reviewer
+     * reading one line at a time cannot see it.
+     *
+     * Measured by port-pages-blocks against a real server, 2026-08-12, on a
+     * host page H, its child C, an inline database D on H, and D's row R (which
+     * is created with `parentId: null` at `routes/databases.ts:1057`, so R is
+     * NOT in H's subtree). Deleting {H, C} — the set `deletePageTree` computes:
+     *
+     *   parentPageId CASCADE + databaseId CASCADE -> H cascades to D, D
+     *     cascades back into `pages` and takes R. Three pages destroyed, two
+     *     asked for. Worse, `deletePageTree` counts from `RETURNING`, which
+     *     never reports cascade-deleted rows, so it answers `deleted: 2` having
+     *     destroyed 3 — silent data loss AND a wrong count.
+     *   parentPageId CASCADE + databaseId SET NULL -> no chain, but a deleted
+     *     database's rows become loose parentless pages in the sidebar.
+     *   parentPageId SET NULL + databaseId CASCADE -> R survives, count is
+     *     correct. The only safe pair.
+     *
+     * SET NULL is safe here because nothing reads `parentPageId` as a
+     * predicate: it is written at `routes/databases.ts:687-688`, serialized at
+     * `:315`, and that is all — so an orphaned inline database keeps appearing
+     * in exactly the list it already appeared in. WHAT WOULD INVALIDATE THIS:
+     * any route filtering `parent_page_id IS NULL` to mean "top-level
+     * database", which would turn an orphan into a different category.
+     *
+     * ## Verify the result, do not trust the declaration
+     *
+     * A circular column-level reference has been silently dropped from both a
+     * generated migration and its snapshot before. port-pages-blocks measured
+     * that this particular pair survives — drizzle emits FKs as separate
+     * `ALTER TABLE ADD CONSTRAINT` after every `CREATE TABLE`, so both land —
+     * and confirmed both in `pg_constraint`. Re-check there, not here.
+     *
+     * BOTH columns must also stay NULLABLE: if either became `notNull` the
+     * pair is uninsertable without `DEFERRABLE INITIALLY DEFERRED`.
      */
     parentPageId: text(),
     /**
@@ -334,8 +371,21 @@ export const databases = pgTable(
       t.archived,
       t.updatedAt.desc(),
     ),
-    // Ported verbatim from `DatabaseSchemaDef.index({ parentPageId: 1 })` —
-    // "which inline databases live on this page".
+    /**
+     * Ported from `DatabaseSchemaDef.index({ parentPageId: 1 })`.
+     *
+     * It has NO query reader — `parent_page_id` is written and serialized but
+     * never a predicate (see the column's note) — and it is still not dead
+     * weight, for a reason unrelated to queries: once the FK above exists,
+     * `ON DELETE SET NULL` has to find every referencing row on each page
+     * delete, and Postgres does not index a referencing column automatically.
+     * Measured on this server at 300k rows: 8.42ms per page delete without
+     * this index, 0.15ms with it — 55x. Deleting a page tree pays that per
+     * page.
+     *
+     * So do not drop it as unused when the census says nothing reads it; the
+     * reader is the constraint, not a query.
+     */
     index('databases_parent_page_idx').on(t.parentPageId),
     /**
      * The property-type enum, derived from `DATABASE_PROPERTY_TYPES` rather
