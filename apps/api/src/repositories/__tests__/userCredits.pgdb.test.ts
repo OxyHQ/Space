@@ -178,6 +178,9 @@ describe('reserveCredits under a forced write-write conflict', () => {
     });
 
     const contended = await contender;
+
+    // The reservation was REFUSED — not merely "something went wrong".
+    expect(contended).toBeNull();
     // 3, not -5: the guard re-ran. A JS-side guard would have written 3 - 8.
     expect(await balance(id)).toEqual({ free: 3, paid: 0 });
   });
