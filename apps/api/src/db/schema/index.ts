@@ -16,4 +16,5 @@
  * entirely, and only the count tells those apart.
  */
 
+export * from './collab.js';
 export * from './workspaces.js';
