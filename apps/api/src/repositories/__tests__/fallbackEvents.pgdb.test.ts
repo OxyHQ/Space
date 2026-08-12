@@ -20,7 +20,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeTestDb, getTestDb, type TestDatabase } from '../../db/__tests__/testDatabase.js';
 import { fallbackEventAttempts, fallbackEvents } from '../../db/schema/providers.js';
@@ -54,7 +54,23 @@ beforeAll(async () => {
   db = await getTestDb();
 });
 
-afterAll(closeTestDb);
+afterAll(async () => {
+  // Delete this file's own rows before closing.
+  //
+  // Not tidiness. `recentFailures` applies its LIMIT before any caller can
+  // filter, and the test database is only reset when the schema fingerprint
+  // changes -- so without this, fallback_events grows monotonically across
+  // runs until the rows a test wrote fall outside the top N and its
+  // assertions start failing. Measured: after roughly eight local runs the
+  // table held 120 unsuccessful events in the 24h window, 110 of them newer
+  // than the 30-minutes-ago fixture, against a limit of 100. It presents as
+  // an intermittent ordering failure and it is neither intermittent nor
+  // about ordering -- run count is the hidden variable, and vitest's
+  // size-based file sequencer means adding any unrelated test file changes
+  // when it first bites.
+  await db.delete(fallbackEvents).where(like(fallbackEvents.clarityModel, 'fb-%'));
+  await closeTestDb();
+});
 
 describe('recording an event', () => {
   it('stores the attempts in the order the engine made them', async () => {
