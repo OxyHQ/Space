@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SUBSCRIPTION_STATUSES, subscriptions } from '../../db/schema/billing.js';
 import {
   countSubscriptions,
@@ -12,9 +12,18 @@ import {
   updateSubscriptionStatus,
   upsertSubscriptionFromStripe,
 } from '../subscriptions.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -43,7 +52,7 @@ function stripeValues(userId: string, overrides: Record<string, unknown> = {}) {
 
 describe('upsertSubscriptionFromStripe', () => {
   it('inserts on first delivery', async () => {
-    const userId = testUserId('sub-new');
+    const userId = testScope('sub-new');
 
     const row = await upsertSubscriptionFromStripe(db, stripeValues(userId));
 
@@ -59,7 +68,7 @@ describe('upsertSubscriptionFromStripe', () => {
    * on exactly that column.
    */
   it('updates in place on redelivery, preserving id and createdAt', async () => {
-    const userId = testUserId('sub-redeliver');
+    const userId = testScope('sub-redeliver');
 
     const first = await upsertSubscriptionFromStripe(db, stripeValues(userId));
     const second = await upsertSubscriptionFromStripe(
@@ -88,7 +97,7 @@ describe('upsertSubscriptionFromStripe', () => {
    * really does round-trip through the update branch.
    */
   it('updates camelCase columns through the conflict branch', async () => {
-    const userId = testUserId('sub-camel');
+    const userId = testScope('sub-camel');
     const laterEnd = new Date(Date.now() + 86_400_000 * 60);
 
     await upsertSubscriptionFromStripe(db, stripeValues(userId));
@@ -117,14 +126,14 @@ describe('upsertSubscriptionFromStripe', () => {
 describe('subscription status CHECK', () => {
   it('accepts every status Stripe can send, including paused', async () => {
     for (const status of SUBSCRIPTION_STATUSES) {
-      const userId = testUserId(`sub-status-${status}`);
+      const userId = testScope(`sub-status-${status}`);
       const row = await upsertSubscriptionFromStripe(db, stripeValues(userId, { status }));
       expect(row.status).toBe(status);
     }
   });
 
   it('refuses a status outside the set', async () => {
-    const userId = testUserId('sub-bad-status');
+    const userId = testScope('sub-bad-status');
     await expect(
       upsertSubscriptionFromStripe(db, stripeValues(userId, { status: 'expired' })),
     ).rejects.toThrow();
@@ -143,7 +152,7 @@ describe('subscription status CHECK', () => {
  */
 describe('a subscription with an incomplete plan snapshot', () => {
   it('is accepted rather than throwing inside the webhook', async () => {
-    const userId = testUserId('sub-nullplan');
+    const userId = testScope('sub-nullplan');
 
     const row = await upsertSubscriptionFromStripe(
       db,
@@ -167,7 +176,7 @@ describe('a subscription with an incomplete plan snapshot', () => {
    * that refuses the legitimate absent case.
    */
   it('still refuses a non-null product outside the set', async () => {
-    const userId = testUserId('sub-badproduct');
+    const userId = testScope('sub-badproduct');
     await expect(
       upsertSubscriptionFromStripe(db, stripeValues(userId, { planProduct: 'nonsense' })),
     ).rejects.toThrow();
@@ -176,7 +185,7 @@ describe('a subscription with an incomplete plan snapshot', () => {
 
 describe('lookups', () => {
   it('finds a live subscription and ignores a canceled one', async () => {
-    const userId = testUserId('sub-live');
+    const userId = testScope('sub-live');
     await upsertSubscriptionFromStripe(db, stripeValues(userId, { status: 'canceled' }));
 
     expect(await findLiveSubscription(db, userId)).toBeNull();
@@ -187,7 +196,7 @@ describe('lookups', () => {
   });
 
   it('narrows by product', async () => {
-    const userId = testUserId('sub-product');
+    const userId = testScope('sub-product');
     await upsertSubscriptionFromStripe(
       db,
       stripeValues(userId, {
@@ -206,7 +215,7 @@ describe('lookups', () => {
    * millisecond, so two rows written in a loop carry no reliable order.
    */
   it('returns the newest live subscription for tier resolution', async () => {
-    const userId = testUserId('sub-newest');
+    const userId = testScope('sub-newest');
     await db.insert(subscriptions).values([
       {
         ...stripeValues(userId, { stripeSubscriptionId: `sub_${userId}_old`, planName: 'Pro' }),
@@ -225,7 +234,7 @@ describe('lookups', () => {
   });
 
   it('lists every live subscription for entitlement resolution', async () => {
-    const userId = testUserId('sub-entitle');
+    const userId = testScope('sub-entitle');
     await db.insert(subscriptions).values([
       stripeValues(userId, { stripeSubscriptionId: `sub_${userId}_a`, planPlanId: 'pro' }),
       stripeValues(userId, {
@@ -243,7 +252,7 @@ describe('lookups', () => {
   });
 
   it('lists a user history including canceled subscriptions', async () => {
-    const userId = testUserId('sub-history');
+    const userId = testScope('sub-history');
     await upsertSubscriptionFromStripe(db, stripeValues(userId, { status: 'canceled' }));
 
     expect(await listSubscriptionsByUser(db, userId)).toHaveLength(1);
@@ -252,7 +261,7 @@ describe('lookups', () => {
 
 describe('updates', () => {
   it('marks a subscription for cancellation at period end', async () => {
-    const userId = testUserId('sub-cancel');
+    const userId = testScope('sub-cancel');
     const row = await upsertSubscriptionFromStripe(db, stripeValues(userId));
 
     const updated = await setCancelAtPeriodEnd(db, row.id, true);
@@ -261,7 +270,7 @@ describe('updates', () => {
   });
 
   it('updates status by stripe subscription id and returns the row', async () => {
-    const userId = testUserId('sub-status-update');
+    const userId = testScope('sub-status-update');
     await upsertSubscriptionFromStripe(db, stripeValues(userId));
 
     const updated = await updateSubscriptionStatus(db, `sub_${userId}`, 'canceled');
@@ -279,11 +288,11 @@ describe('updates', () => {
    * guard works unchanged — but only if this returns null rather than throwing.
    */
   it('returns null when no subscription carries that stripe id', async () => {
-    expect(await updateSubscriptionStatus(db, `sub_${testUserId('nope')}`, 'canceled')).toBeNull();
+    expect(await updateSubscriptionStatus(db, `sub_${testScope('nope')}`, 'canceled')).toBeNull();
   });
 
   it('rewrites the whole plan snapshot in one statement', async () => {
-    const userId = testUserId('sub-changeplan');
+    const userId = testScope('sub-changeplan');
     const row = await upsertSubscriptionFromStripe(db, stripeValues(userId));
 
     const updated = await updateSubscriptionPlan(db, row.id, {
@@ -308,7 +317,7 @@ describe('updates', () => {
 
 describe('counts are numbers, not strings', () => {
   it('countSubscriptions adds rather than concatenating', async () => {
-    const userId = testUserId('sub-count');
+    const userId = testScope('sub-count');
     await db.insert(subscriptions).values([
       stripeValues(userId, { stripeSubscriptionId: `sub_${userId}_1` }),
       stripeValues(userId, { stripeSubscriptionId: `sub_${userId}_2` }),

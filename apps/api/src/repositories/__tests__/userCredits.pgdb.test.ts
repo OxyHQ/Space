@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { userCredits } from '../../db/schema/billing.js';
 import {
   addCredits,
@@ -15,15 +15,24 @@ import {
   setStripeCustomerId,
   zeroCredits,
 } from '../userCredits.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
 /** Seed a row with an exact balance. Every test owns its own user id. */
 async function seed(free: number, paid: number): Promise<string> {
-  const id = testUserId('uc');
+  const id = testScope('uc');
   await db.insert(userCredits).values({
     id,
     creditsFree: free,
@@ -42,7 +51,7 @@ async function balance(id: string): Promise<{ free: number; paid: number }> {
 
 describe('getOrCreateUserCredits', () => {
   it('creates a row with the default grant', async () => {
-    const id = testUserId('uc-create');
+    const id = testScope('uc-create');
     const row = await getOrCreateUserCredits(db, id);
 
     expect(row.id).toBe(id);
@@ -117,7 +126,7 @@ describe('reserveCredits', () => {
   });
 
   it('returns null for a user with no row rather than creating one', async () => {
-    const id = testUserId('uc-missing');
+    const id = testScope('uc-missing');
 
     expect(await reserveCredits(db, id, 1)).toBeNull();
     expect(await findUserCreditsById(db, id)).toBeNull();
@@ -282,7 +291,7 @@ describe('refreshCreditsIfNeeded', () => {
   });
 
   it('reports no refresh for a user with no row', async () => {
-    const result = await refreshCreditsIfNeeded(db, testUserId('uc-none'));
+    const result = await refreshCreditsIfNeeded(db, testScope('uc-none'));
     expect(result).toEqual({ row: null, refreshed: false });
   });
 });
@@ -301,7 +310,7 @@ describe('addCredits', () => {
   });
 
   it('returns null for a user with no row', async () => {
-    expect(await addCredits(db, testUserId('uc-none'), 5)).toBeNull();
+    expect(await addCredits(db, testScope('uc-none'), 5)).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { API_KEY_SCOPES, developerApiKeys, developerApps } from '../../db/schema/billing.js';
 import {
   createDeveloperApiKey,
@@ -12,9 +12,18 @@ import {
   setDeveloperAppActive,
   touchDeveloperApiKey,
 } from '../developerApps.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -34,7 +43,7 @@ async function app(userId: string): Promise<string> {
 
 describe('developer apps', () => {
   it('applies the defaults the Mongoose schema declared', async () => {
-    const userId = testUserId('dev-app');
+    const userId = testScope('dev-app');
     const row = await createDeveloperApp(db, { oxyUserId: userId, name: 'Defaults' });
 
     expect(row.isActive).toBe(true);
@@ -43,7 +52,7 @@ describe('developer apps', () => {
   });
 
   it('stores redirect urls as an array', async () => {
-    const userId = testUserId('dev-redirects');
+    const userId = testScope('dev-redirects');
     const row = await createDeveloperApp(db, {
       oxyUserId: userId,
       name: 'Redirects',
@@ -61,18 +70,18 @@ describe('developer apps', () => {
    */
   it('refuses a name longer than 100 characters', async () => {
     await expect(
-      createDeveloperApp(db, { oxyUserId: testUserId('dev-long'), name: 'x'.repeat(101) }),
+      createDeveloperApp(db, { oxyUserId: testScope('dev-long'), name: 'x'.repeat(101) }),
     ).rejects.toThrow();
   });
 
   it('accepts a name of exactly 100 characters', async () => {
     await expect(
-      createDeveloperApp(db, { oxyUserId: testUserId('dev-100'), name: 'x'.repeat(100) }),
+      createDeveloperApp(db, { oxyUserId: testScope('dev-100'), name: 'x'.repeat(100) }),
     ).resolves.toBeDefined();
   });
 
   it('refuses a description longer than 500 characters but allows none at all', async () => {
-    const userId = testUserId('dev-desc');
+    const userId = testScope('dev-desc');
     await expect(
       createDeveloperApp(db, { oxyUserId: userId, name: 'D', description: 'x'.repeat(501) }),
     ).rejects.toThrow();
@@ -82,7 +91,7 @@ describe('developer apps', () => {
   });
 
   it('lists a user\'s apps and can narrow to the active ones', async () => {
-    const userId = testUserId('dev-list');
+    const userId = testScope('dev-list');
     const keep = await app(userId);
     const drop = await app(userId);
     await setDeveloperAppActive(db, drop, false);
@@ -95,7 +104,7 @@ describe('developer apps', () => {
 
 describe('developer api keys', () => {
   it('applies the default scopes and rate limits', async () => {
-    const userId = testUserId('dev-key');
+    const userId = testScope('dev-key');
     const row = await createDeveloperApiKey(db, {
       oxyUserId: userId,
       appId: await app(userId),
@@ -115,7 +124,7 @@ describe('developer api keys', () => {
   });
 
   it('finds a key by its hash', async () => {
-    const userId = testUserId('dev-hash');
+    const userId = testScope('dev-hash');
     const keyHash = `hash_${userId}`;
     await createDeveloperApiKey(db, {
       oxyUserId: userId,
@@ -130,7 +139,7 @@ describe('developer api keys', () => {
   });
 
   it('refuses a duplicate key hash', async () => {
-    const userId = testUserId('dev-dupe');
+    const userId = testScope('dev-dupe');
     const appId = await app(userId);
     const keyHash = `hash_${userId}`;
     const base = { oxyUserId: userId, appId, keyPrefix: 'clarity_sk_0000', keyHash };
@@ -140,7 +149,7 @@ describe('developer api keys', () => {
   });
 
   it('refuses a scope outside the enum', async () => {
-    const userId = testUserId('dev-scope');
+    const userId = testScope('dev-scope');
     await expect(
       createDeveloperApiKey(db, {
         oxyUserId: userId,
@@ -154,7 +163,7 @@ describe('developer api keys', () => {
   });
 
   it('accepts every declared scope at once', async () => {
-    const userId = testUserId('dev-allscopes');
+    const userId = testScope('dev-allscopes');
     const row = await createDeveloperApiKey(db, {
       oxyUserId: userId,
       appId: await app(userId),
@@ -175,7 +184,7 @@ describe('developer api keys', () => {
    * never had.
    */
   it('accepts an empty scope list, as the source did', async () => {
-    const userId = testUserId('dev-noscope');
+    const userId = testScope('dev-noscope');
     const row = await createDeveloperApiKey(db, {
       oxyUserId: userId,
       appId: await app(userId),
@@ -189,7 +198,7 @@ describe('developer api keys', () => {
   });
 
   it('stamps lastUsedAt on touch', async () => {
-    const userId = testUserId('dev-touch');
+    const userId = testScope('dev-touch');
     const row = await createDeveloperApiKey(db, {
       oxyUserId: userId,
       appId: await app(userId),
@@ -203,7 +212,7 @@ describe('developer api keys', () => {
   });
 
   it('lists an app\'s keys and can narrow to the active ones', async () => {
-    const userId = testUserId('dev-keylist');
+    const userId = testScope('dev-keylist');
     const appId = await app(userId);
     const base = { oxyUserId: userId, appId, keyPrefix: 'clarity_sk_0000' };
     const live = await createDeveloperApiKey(db, {
@@ -229,7 +238,7 @@ describe('developer api keys', () => {
    * foreign key really is enforced, which no functional test would notice.
    */
   it('refuses a key whose app does not exist', async () => {
-    const userId = testUserId('dev-orphan');
+    const userId = testScope('dev-orphan');
     await expect(
       createDeveloperApiKey(db, {
         oxyUserId: userId,
@@ -242,7 +251,7 @@ describe('developer api keys', () => {
   });
 
   it('cascades a hard app delete to its keys', async () => {
-    const userId = testUserId('dev-cascade');
+    const userId = testScope('dev-cascade');
     const appId = await app(userId);
     await createDeveloperApiKey(db, {
       oxyUserId: userId,

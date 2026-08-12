@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { transactions } from '../../db/schema/billing.js';
 import {
   countTransactions,
@@ -10,9 +10,18 @@ import {
   listTransactions,
   listTransactionsByUser,
 } from '../transactions.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -26,7 +35,7 @@ async function rowsFor(oxyUserId: string): Promise<number> {
 
 describe('createCreditPurchase idempotency', () => {
   it('records the purchase', async () => {
-    const userId = testUserId('tx-buy');
+    const userId = testScope('tx-buy');
 
     const row = await createCreditPurchase(db, {
       oxyUserId: userId,
@@ -54,7 +63,7 @@ describe('createCreditPurchase idempotency', () => {
    *     that silently inserted a second row and returned null would pass.
    */
   it('answers a redelivered payment intent with null, and stores one row', async () => {
-    const userId = testUserId('tx-dup');
+    const userId = testScope('tx-dup');
     const values = {
       oxyUserId: userId,
       stripePaymentIntentId: `pi_${userId}`,
@@ -77,7 +86,7 @@ describe('createCreditPurchase idempotency', () => {
    * after the first would look correct.
    */
   it('still records a different payment intent for the same user', async () => {
-    const userId = testUserId('tx-two');
+    const userId = testScope('tx-two');
     const base = { oxyUserId: userId, amount: 500, currency: 'usd', credits: 50 };
 
     await createCreditPurchase(db, { ...base, stripePaymentIntentId: `pi_${userId}_a` });
@@ -89,7 +98,7 @@ describe('createCreditPurchase idempotency', () => {
 
 describe('createSubscriptionPayment idempotency', () => {
   it('answers a redelivered period with null, and stores one row', async () => {
-    const userId = testUserId('tx-sub');
+    const userId = testScope('tx-sub');
     const values = {
       oxyUserId: userId,
       amount: 2000,
@@ -104,7 +113,7 @@ describe('createSubscriptionPayment idempotency', () => {
   });
 
   it('records the next period, which carries a different dedup key', async () => {
-    const userId = testUserId('tx-periods');
+    const userId = testScope('tx-periods');
     const base = { oxyUserId: userId, amount: 2000, currency: 'usd', credits: 500 };
 
     await createSubscriptionPayment(db, { ...base, dedup: `sub_${userId}_p1` });
@@ -127,7 +136,7 @@ describe('createSubscriptionPayment idempotency', () => {
  */
 describe('NULLS DISTINCT on both unique indexes', () => {
   it('permits many transactions with no payment intent and no dedup key', async () => {
-    const userId = testUserId('tx-nulls');
+    const userId = testScope('tx-nulls');
     const values = { oxyUserId: userId, amount: 100, currency: 'usd', credits: 10 };
 
     await db.insert(transactions).values({ ...values, type: 'refund', status: 'completed' });
@@ -142,7 +151,7 @@ describe('CHECK constraints', () => {
   it('refuses an unknown transaction type', async () => {
     await expect(
       db.insert(transactions).values({
-        oxyUserId: testUserId('tx-bad'),
+        oxyUserId: testScope('tx-bad'),
         type: 'chargeback',
         amount: 1,
         currency: 'usd',
@@ -154,7 +163,7 @@ describe('CHECK constraints', () => {
   it('refuses an unknown status', async () => {
     await expect(
       db.insert(transactions).values({
-        oxyUserId: testUserId('tx-bad'),
+        oxyUserId: testScope('tx-bad'),
         type: 'refund',
         amount: 1,
         currency: 'usd',
@@ -178,7 +187,7 @@ describe('CHECK constraints', () => {
  */
 describe('counts are numbers, not strings', () => {
   it('countTransactionsByUser returns a number that adds rather than concatenates', async () => {
-    const userId = testUserId('tx-count');
+    const userId = testScope('tx-count');
     const base = { oxyUserId: userId, amount: 100, currency: 'usd', credits: 10 };
     await createCreditPurchase(db, { ...base, stripePaymentIntentId: `pi_${userId}_1` });
     await createCreditPurchase(db, { ...base, stripePaymentIntentId: `pi_${userId}_2` });
@@ -192,7 +201,7 @@ describe('counts are numbers, not strings', () => {
   });
 
   it('countTransactions returns a number for a filtered admin query', async () => {
-    const userId = testUserId('tx-admin-count');
+    const userId = testScope('tx-admin-count');
     const base = { oxyUserId: userId, amount: 100, currency: 'usd', credits: 10 };
     await createCreditPurchase(db, { ...base, stripePaymentIntentId: `pi_${userId}_1` });
     await createCreditPurchase(db, { ...base, stripePaymentIntentId: `pi_${userId}_2` });
@@ -204,7 +213,7 @@ describe('counts are numbers, not strings', () => {
   });
 
   it('counts zero for a user with no transactions', async () => {
-    const total = await countTransactionsByUser(db, testUserId('tx-empty'));
+    const total = await countTransactionsByUser(db, testScope('tx-empty'));
     expect(total).toBe(0);
     expect(total + 1).toBe(1);
   });
@@ -219,7 +228,7 @@ describe('listing and pagination', () => {
    * do with the query.
    */
   it('returns a user history newest first, and pages without overlap', async () => {
-    const userId = testUserId('tx-page');
+    const userId = testScope('tx-page');
     const base = { oxyUserId: userId, type: 'credit_purchase', amount: 100, currency: 'usd' };
     await db.insert(transactions).values([
       { ...base, credits: 1, description: 'oldest', createdAt: new Date(Date.now() - 30_000) },
@@ -235,8 +244,8 @@ describe('listing and pagination', () => {
   });
 
   it('scopes a user history to that user', async () => {
-    const mine = testUserId('tx-mine');
-    const theirs = testUserId('tx-theirs');
+    const mine = testScope('tx-mine');
+    const theirs = testScope('tx-theirs');
     const base = { type: 'refund', amount: 1, currency: 'usd', credits: 0 };
     await db.insert(transactions).values([
       { ...base, oxyUserId: mine },
@@ -255,7 +264,7 @@ describe('listing and pagination', () => {
    * with no error — the quiet failure this whole domain is written against.
    */
   it('an undefined filter key does not become a null comparison', async () => {
-    const userId = testUserId('tx-nofilter');
+    const userId = testScope('tx-nofilter');
     await db
       .insert(transactions)
       .values({ oxyUserId: userId, type: 'refund', amount: 1, currency: 'usd', credits: 0 });
@@ -266,7 +275,7 @@ describe('listing and pagination', () => {
   });
 
   it('caps the per-user admin view', async () => {
-    const userId = testUserId('tx-recent');
+    const userId = testScope('tx-recent');
     await db
       .insert(transactions)
       .values({ oxyUserId: userId, type: 'refund', amount: 1, currency: 'usd', credits: 0 });
@@ -279,7 +288,7 @@ describe('listing and pagination', () => {
 
 describe('column defaults', () => {
   it('defaults currency and status the way the Mongoose schema did', async () => {
-    const userId = testUserId('tx-defaults');
+    const userId = testScope('tx-defaults');
     await db.insert(transactions).values({
       oxyUserId: userId,
       type: 'credit_purchase',

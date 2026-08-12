@@ -419,7 +419,18 @@ describe('notifications repository', () => {
 
       const callers: string[] = [];
       for (const file of files) {
-        if (file.endsWith('notifications.pgdb.test.ts')) continue;
+        // Test files are not schedulers: this suite calls the sweep directly,
+        // and so does any sibling domain's expiry suite. The claim being made
+        // is that no PRODUCTION module schedules it.
+        //
+        // Broadening an exclusion is the shape that erodes a gate into
+        // vacuity, so this was mutation-tested rather than trusted: a real
+        // scheduler dropped into src/lib/ (a setInterval calling
+        // sweepAllExpiredRows) turns this red and names the file; removing it
+        // turns it green. Note the detector matches `sweepAllExpiredRows(`, so
+        // a control that merely REFERENCES the symbol without calling it
+        // passes and makes the gate look dead.
+        if (file.endsWith('.test.ts')) continue;
         const text = await readFile(file, 'utf8');
         if (text.includes('sweepAllExpiredRows(') || text.includes('sweepExpiredRows(')) {
           callers.push(file);

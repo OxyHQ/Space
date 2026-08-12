@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { apiKeyUsage } from '../../db/schema/billing.js';
 import {
   countRequestsSince,
@@ -12,9 +12,18 @@ import {
   usageByEndpointSince,
   usageSummarySince,
 } from '../apiKeyUsage.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -56,28 +65,28 @@ async function record(
  */
 describe('token-to-credit conversion', () => {
   it('rounds 1500 tokens up to 2 credits, not down to 1', async () => {
-    const userId = testUserId('usage-div');
+    const userId = testScope('usage-div');
     await record(userId, { tokensUsed: 1500, creditsUsed: 0 });
 
     expect(await creditsSpentSince(db, userId, minutesAgo(10))).toBe(2);
   });
 
   it('rounds 2001 tokens up to 3 credits', async () => {
-    const userId = testUserId('usage-div2');
+    const userId = testScope('usage-div2');
     await record(userId, { tokensUsed: 2001, creditsUsed: 0 });
 
     expect(await creditsSpentSince(db, userId, minutesAgo(10))).toBe(3);
   });
 
   it('floors a single token at one whole credit', async () => {
-    const userId = testUserId('usage-floor');
+    const userId = testScope('usage-floor');
     await record(userId, { tokensUsed: 1, creditsUsed: 0 });
 
     expect(await creditsSpentSince(db, userId, minutesAgo(10))).toBe(1);
   });
 
   it('prefers a recorded credit charge over the token estimate', async () => {
-    const userId = testUserId('usage-explicit');
+    const userId = testScope('usage-explicit');
     await record(userId, { tokensUsed: 9999, creditsUsed: 7 });
 
     expect(await creditsSpentSince(db, userId, minutesAgo(10))).toBe(7);
@@ -89,14 +98,14 @@ describe('token-to-credit conversion', () => {
    * invent a credit and the anomaly detector would fire on idle accounts.
    */
   it('ignores rows with neither tokens nor credits', async () => {
-    const userId = testUserId('usage-zero');
+    const userId = testScope('usage-zero');
     await record(userId, { tokensUsed: 0, creditsUsed: 0 });
 
     expect(await creditsSpentSince(db, userId, minutesAgo(10))).toBe(0);
   });
 
   it('sums a mixed set correctly', async () => {
-    const userId = testUserId('usage-mixed');
+    const userId = testScope('usage-mixed');
     await record(userId, { tokensUsed: 1500, creditsUsed: 0 }); // 2
     await record(userId, { tokensUsed: 0, creditsUsed: 5 }); // 5
     await record(userId, { tokensUsed: 0, creditsUsed: 0 }); // ignored
@@ -117,7 +126,7 @@ describe('token-to-credit conversion', () => {
  */
 describe('aggregates are numbers, not strings', () => {
   it('sumTokensSince adds rather than concatenating', async () => {
-    const userId = testUserId('usage-sum');
+    const userId = testScope('usage-sum');
     await record(userId, { tokensUsed: 9 });
     await record(userId, { tokensUsed: 2 });
 
@@ -136,7 +145,7 @@ describe('aggregates are numbers, not strings', () => {
    * limit a user who is nowhere near their quota.
    */
   it('a summed total compares numerically against a limit', async () => {
-    const userId = testUserId('usage-cmp');
+    const userId = testScope('usage-cmp');
     await record(userId, { tokensUsed: 9 });
 
     const total = await sumTokensSince(db, userId, 'session', minutesAgo(10));
@@ -146,13 +155,13 @@ describe('aggregates are numbers, not strings', () => {
   });
 
   it('returns 0 rather than NaN when a user has no usage', async () => {
-    const total = await sumTokensSince(db, testUserId('usage-none'), 'session', minutesAgo(10));
+    const total = await sumTokensSince(db, testScope('usage-none'), 'session', minutesAgo(10));
     expect(total).toBe(0);
     expect(Number.isNaN(total)).toBe(false);
   });
 
   it('countRequestsSince returns a number', async () => {
-    const userId = testUserId('usage-count');
+    const userId = testScope('usage-count');
     await record(userId, { tokensUsed: 1 });
     await record(userId, { tokensUsed: 1 });
 
@@ -163,7 +172,7 @@ describe('aggregates are numbers, not strings', () => {
   });
 
   it('scopes counts by auth type and by window', async () => {
-    const userId = testUserId('usage-scope');
+    const userId = testScope('usage-scope');
     await record(userId, { authType: 'session', timestamp: minutesAgo(1) });
     await record(userId, { authType: 'internal', timestamp: minutesAgo(1) });
     await record(userId, { authType: 'session', timestamp: minutesAgo(120) });
@@ -183,7 +192,7 @@ describe('usageSummarySince', () => {
    * gets wrong, and it always reads LOWER, so latency looks better than it is.
    */
   it('averages response time over timed requests only', async () => {
-    const userId = testUserId('usage-avg');
+    const userId = testScope('usage-avg');
     await record(userId, { responseTime: 100 });
     await record(userId, { responseTime: 200 });
     await record(userId, { responseTime: null });
@@ -195,7 +204,7 @@ describe('usageSummarySince', () => {
   });
 
   it('splits successful from error requests on the 400 boundary', async () => {
-    const userId = testUserId('usage-status');
+    const userId = testScope('usage-status');
     await record(userId, { statusCode: 200 });
     await record(userId, { statusCode: 399 });
     await record(userId, { statusCode: 400 });
@@ -232,7 +241,7 @@ describe('usageSummarySince', () => {
  */
 describe('daily bucketing is UTC', () => {
   it('buckets a row by its UTC calendar day', async () => {
-    const userId = testUserId('usage-day');
+    const userId = testScope('usage-day');
     const when = new Date(Date.now() - 60 * 60_000);
     await record(userId, { tokensUsed: 1000, creditsUsed: 0, timestamp: when });
 
@@ -244,7 +253,7 @@ describe('daily bucketing is UTC', () => {
   });
 
   it('returns only days that have usage, leaving gap-filling to the caller', async () => {
-    const userId = testUserId('usage-gaps');
+    const userId = testScope('usage-gaps');
     await record(userId, { tokensUsed: 1000, timestamp: minutesAgo(60) });
 
     const rows = await dailyCreditUsageByUser(db, userId, minutesAgo(60 * 24 * 5));
@@ -259,7 +268,7 @@ describe('daily bucketing is UTC', () => {
    * anomaly the function exists to detect.
    */
   it('excludes the upper bound from the historical window', async () => {
-    const userId = testUserId('usage-window');
+    const userId = testScope('usage-window');
     const boundary = new Date(Date.now() - 60 * 60_000);
     await record(userId, { tokensUsed: 5000, timestamp: boundary });
     await record(userId, { tokensUsed: 1000, timestamp: new Date(boundary.getTime() - 60_000) });
@@ -271,7 +280,7 @@ describe('daily bucketing is UTC', () => {
   });
 
   it('reports usage by day for the admin dashboard as numbers', async () => {
-    const userId = testUserId('usage-adminday');
+    const userId = testScope('usage-adminday');
     await record(userId, { tokensUsed: 7, creditsUsed: 3, timestamp: minutesAgo(5) });
 
     const rows = await usageByDaySince(db, minutesAgo(10));
@@ -285,7 +294,7 @@ describe('daily bucketing is UTC', () => {
 
 describe('usageByEndpointSince', () => {
   it('orders by request count and caps the result', async () => {
-    const userId = testUserId('usage-endpoint');
+    const userId = testScope('usage-endpoint');
     const endpoint = `/v1/probe/${userId}`;
     await record(userId, { endpoint, tokensUsed: 1 });
     await record(userId, { endpoint, tokensUsed: 1 });
@@ -301,18 +310,18 @@ describe('usageByEndpointSince', () => {
 describe('CHECK constraints', () => {
   it('refuses an HTTP method outside the enum', async () => {
     await expect(
-      record(testUserId('usage-bad'), { method: 'OPTIONS' }),
+      record(testScope('usage-bad'), { method: 'OPTIONS' }),
     ).rejects.toThrow();
   });
 
   it('refuses an auth type outside the enum', async () => {
     await expect(
-      record(testUserId('usage-bad'), { authType: 'oauth' }),
+      record(testScope('usage-bad'), { authType: 'oauth' }),
     ).rejects.toThrow();
   });
 
   it('accepts every enum member the writers actually produce', async () => {
-    const userId = testUserId('usage-enums');
+    const userId = testScope('usage-enums');
     for (const authType of ['api_key', 'session', 'internal']) {
       await record(userId, { authType });
     }

@@ -1,12 +1,21 @@
 import { sweepAllExpiredRows } from '@oxyhq/db/expiry';
 import { and, eq, sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BILLING_EXPIRY_TARGETS } from '../../db/expiry-targets.js';
 import { API_KEY_USAGE_RETENTION_SECONDS, apiKeyUsage } from '../../db/schema/billing.js';
 import { recordApiKeyUsage } from '../apiKeyUsage.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -72,7 +81,7 @@ describe('the billing expiry registry', () => {
 
 describe('sweeping expired usage rows', () => {
   it('deletes rows past the retention window and spares the rest', async () => {
-    const userId = testUserId('sweep');
+    const userId = testScope('sweep');
 
     // Fixture instants are relative to now — an absolute date in a committed
     // fixture ages into a different meaning and detonates in a sibling file.
@@ -111,7 +120,7 @@ describe('sweeping expired usage rows', () => {
    * usage history silently, and every remaining chart would still render.
    */
   it('spares a row one day inside the window', async () => {
-    const userId = testUserId('sweep-edge');
+    const userId = testScope('sweep-edge');
     await recordApiKeyUsage(db, {
       oxyUserId: userId,
       endpoint: '/edge',
@@ -130,7 +139,7 @@ describe('sweeping expired usage rows', () => {
    * schedule and most runs will find nothing.
    */
   it('reports zero deletions when nothing has expired', async () => {
-    const userId = testUserId('sweep-none');
+    const userId = testScope('sweep-none');
     await recordApiKeyUsage(db, {
       oxyUserId: userId,
       endpoint: '/recent',
@@ -153,7 +162,7 @@ describe('sweeping expired usage rows', () => {
    * the same. This proves the sweep can actually delete.
    */
   it('positive control: the sweep really deletes when a row is expired', async () => {
-    const userId = testUserId('sweep-control');
+    const userId = testScope('sweep-control');
     await recordApiKeyUsage(db, {
       oxyUserId: userId,
       endpoint: '/ancient',
@@ -203,7 +212,7 @@ describe('read paths coexist with the sweep', () => {
   });
 
   it('a 30-day read finds rows the sweep would not have taken', async () => {
-    const userId = testUserId('sweep-read');
+    const userId = testScope('sweep-read');
     await recordApiKeyUsage(db, {
       oxyUserId: userId,
       endpoint: '/in-window',

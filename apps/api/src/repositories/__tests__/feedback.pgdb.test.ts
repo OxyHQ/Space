@@ -1,19 +1,28 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { feedback } from '../../db/schema/billing.js';
 import {
   createFeedback,
   findFeedbackByIdForUser,
   listFeedbackByUser,
 } from '../feedback.js';
-import { closeTestDb, testDb, testUserId } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
 describe('createFeedback', () => {
   it('stores the submission with its declared metadata fields', async () => {
-    const userId = testUserId('fb-create');
+    const userId = testScope('fb-create');
 
     const row = await createFeedback(db, {
       oxyUserId: userId,
@@ -39,7 +48,7 @@ describe('createFeedback', () => {
    * nowhere.
    */
   it('discards metadata keys the schema never declared', async () => {
-    const userId = testUserId('fb-strict');
+    const userId = testScope('fb-strict');
 
     const row = await createFeedback(db, {
       oxyUserId: userId,
@@ -57,7 +66,7 @@ describe('createFeedback', () => {
   });
 
   it('accepts a submission with no rating and no metadata', async () => {
-    const userId = testUserId('fb-minimal');
+    const userId = testScope('fb-minimal');
 
     const row = await createFeedback(db, {
       oxyUserId: userId,
@@ -79,18 +88,18 @@ describe('createFeedback', () => {
 describe('rating CHECK', () => {
   it('refuses a rating above 5', async () => {
     await expect(
-      createFeedback(db, { oxyUserId: testUserId('fb-hi'), type: 'bug', message: 'x', rating: 6 }),
+      createFeedback(db, { oxyUserId: testScope('fb-hi'), type: 'bug', message: 'x', rating: 6 }),
     ).rejects.toThrow();
   });
 
   it('refuses a rating below 1', async () => {
     await expect(
-      createFeedback(db, { oxyUserId: testUserId('fb-lo'), type: 'bug', message: 'x', rating: 0 }),
+      createFeedback(db, { oxyUserId: testScope('fb-lo'), type: 'bug', message: 'x', rating: 0 }),
     ).rejects.toThrow();
   });
 
   it('accepts both boundaries', async () => {
-    const userId = testUserId('fb-bounds');
+    const userId = testScope('fb-bounds');
     await expect(
       createFeedback(db, { oxyUserId: userId, type: 'bug', message: 'x', rating: 1 }),
     ).resolves.toBeDefined();
@@ -101,14 +110,14 @@ describe('rating CHECK', () => {
 
   it('refuses a type outside the enum', async () => {
     await expect(
-      createFeedback(db, { oxyUserId: testUserId('fb-type'), type: 'complaint', message: 'x' }),
+      createFeedback(db, { oxyUserId: testScope('fb-type'), type: 'complaint', message: 'x' }),
     ).rejects.toThrow();
   });
 });
 
 describe('reading feedback back', () => {
   it('returns a user history newest first', async () => {
-    const userId = testUserId('fb-list');
+    const userId = testScope('fb-list');
     await db.insert(feedback).values([
       {
         oxyUserId: userId,
@@ -130,8 +139,8 @@ describe('reading feedback back', () => {
   });
 
   it('scopes a history to its own user', async () => {
-    const mine = testUserId('fb-mine');
-    const theirs = testUserId('fb-theirs');
+    const mine = testScope('fb-mine');
+    const theirs = testScope('fb-theirs');
     await createFeedback(db, { oxyUserId: mine, type: 'bug', message: 'mine' });
     await createFeedback(db, { oxyUserId: theirs, type: 'bug', message: 'theirs' });
 
@@ -148,8 +157,8 @@ describe('reading feedback back', () => {
    * IDOR the first time someone forgets the second half.
    */
   it('refuses to return another user\'s feedback', async () => {
-    const mine = testUserId('fb-owner');
-    const theirs = testUserId('fb-other');
+    const mine = testScope('fb-owner');
+    const theirs = testScope('fb-other');
     const row = await createFeedback(db, { oxyUserId: mine, type: 'bug', message: 'private' });
 
     expect((await findFeedbackByIdForUser(db, row.id, mine))?.message).toBe('private');

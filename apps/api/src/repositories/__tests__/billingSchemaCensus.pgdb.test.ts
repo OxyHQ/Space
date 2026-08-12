@@ -1,7 +1,7 @@
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { sqlColumnName } from '@oxyhq/db';
 import { sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import {
   apiKeyUsage,
@@ -12,9 +12,18 @@ import {
   transactions,
   userCredits,
 } from '../../db/schema/billing.js';
-import { closeTestDb, testDb } from './testDatabase.js';
+import {
+  closeTestDb,
+  getTestDb,
+  type TestDatabase,
+  testScope,
+} from '../../db/__tests__/testDatabase.js';
 
-const db = testDb();
+let db: TestDatabase;
+
+beforeAll(async () => {
+  db = await getTestDb();
+});
 
 afterAll(closeTestDb);
 
@@ -237,7 +246,13 @@ describe('every billing table has exactly the columns its writers need', () => {
     const expectedTotal = EXPECTED.reduce((n, e) => n + e.columns.length, 0);
 
     expect(declaredTotal).toBe(expectedTotal);
-    expect(declaredTotal).toBeGreaterThan(100);
+    // Derived from the census rather than hardcoded. A fixed floor has to be
+    // edited on every legitimate change -- it went stale the moment
+    // cost_entries moved to the providers domain -- and a floor that is
+    // routinely edited downward stops being a floor. Ten columns per table is
+    // far below any real billing table and far above what a broken read
+    // (zero) or a half-broken one would produce.
+    expect(declaredTotal).toBeGreaterThan(10 * EXPECTED.length);
 
     const live = await liveColumns('user_credits');
     expect(live.length).toBeGreaterThan(0);
@@ -263,13 +278,25 @@ describe('every billing table has exactly the columns its writers need', () => {
  * applies to any claim that this domain's tables exist.
  */
 describe('the billing domain is fully reachable from the schema entry point', () => {
-  it('declares all eight tables', () => {
-    expect(EXPECTED).toHaveLength(8);
+  /**
+   * Seven, not the eight this census was written against.
+   *
+   * A decrement in a gate is how one erodes into vacuity, so the reason is
+   * named here rather than left as a smaller number: `cost_entries` was ported
+   * twice, by this domain and by providers, and providers' copy is the one
+   * kept -- CostEntry is the provider-routing cost ledger and
+   * `lib/cost-tracker.ts` is provider-routing code. It is still censused, by
+   * providers' own suite. This decrement is legitimate ONLY because it is
+   * paired with that named relocation in the same change; a future decrement
+   * needs its own.
+   */
+  it('declares all seven tables', () => {
+    expect(EXPECTED).toHaveLength(7);
     const names = new Set(EXPECTED.map((e) => getTableConfig(e.table).name));
-    expect(names.size).toBe(8);
+    expect(names.size).toBe(7);
   });
 
-  it('all eight exist in the database', async () => {
+  it('all seven exist in the database', async () => {
     const rows = await db.execute(sql`
       select table_name from information_schema.tables
       where table_schema = 'public'
