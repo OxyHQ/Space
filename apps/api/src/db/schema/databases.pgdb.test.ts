@@ -237,7 +237,7 @@ describe('column defaults', () => {
     expect(database.propertiesSchema).toEqual({ properties: [] });
     expect(database.isInline).toBe(false);
     expect(database.parentPageId).toBeNull();
-    expect(database.archivedAt).toBeNull();
+    expect(database.archived).toBe(false);
     expect(database.createdAt).toBeInstanceOf(Date);
     expect(database.updatedAt).toBeInstanceOf(Date);
 
@@ -269,7 +269,16 @@ describe('column defaults', () => {
       .from(databases)
       .where(sql`${databases.id} = ${row.id}`);
     expect(readBack.createdAt.getTime()).toBe(row.createdAt.getTime());
-    expect(row.createdAt.getTime() % 1).toBe(0);
+    // The claim is that the STORED value carries no microseconds — a JS Date
+    // cannot represent them, so a plain `now()` default would make any keyset
+    // cursor built from this read compare against a value smaller than its own
+    // row. `getTime() % 1 === 0` is true of every Date and would prove nothing;
+    // this reads the microsecond component out of Postgres itself.
+    const [precision] = await client.unsafe<{ micros: string }[]>(
+      `select date_part('microseconds', created_at)::text as micros
+       from databases where id = '${row.id}'`,
+    );
+    expect(Number(precision.micros) % 1000).toBe(0);
   });
 });
 
@@ -301,7 +310,7 @@ describe('columns', () => {
         'properties_schema',
         'is_inline',
         'parent_page_id',
-        'archived_at',
+        'archived',
         'created_at',
         'updated_at',
       ]),

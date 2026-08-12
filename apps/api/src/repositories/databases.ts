@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ne } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import type { StationDatabase } from '../db/client.js';
 import {
@@ -58,13 +58,7 @@ export type StationTransaction = Parameters<
 >[0];
 export type StationHandle = StationDatabase | StationTransaction;
 
-/**
- * The `databases` row as the rest of the application sees it.
- *
- * `archived: boolean` rather than the column's `archivedAt: Date | null`: the
- * Mongo field was a boolean and the wire format still is, so the timestamp
- * representation is confined to the schema and this mapping.
- */
+/** The `databases` row as the rest of the application sees it. */
 export interface DatabaseRecord {
   id: string;
   workspaceId: string;
@@ -112,7 +106,7 @@ function toDatabaseRecord(row: DatabaseRow): DatabaseRecord {
     propertiesSchema: row.propertiesSchema,
     isInline: row.isInline,
     parentPageId: row.parentPageId,
-    archived: row.archivedAt !== null,
+    archived: row.archived,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -138,18 +132,6 @@ function toViewRecord(row: DatabaseViewRow): DatabaseViewRecord {
   };
 }
 
-/**
- * The instant an archive is stamped with, bound as an ISO string with an
- * explicit cast.
- *
- * A bare `Date` interpolated into a `sql` template fails at serialisation in
- * the driver — that is only handled for values that go through the query
- * builder's own mapper, which `coalesce(...)` below does not.
- */
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
 // ---------------------------------------------------------------------------
 // Databases
 // ---------------------------------------------------------------------------
@@ -169,7 +151,7 @@ export async function listDatabasesByWorkspace(
 ): Promise<DatabaseRecord[]> {
   const where = input.includeArchived
     ? eq(databases.workspaceId, input.workspaceId)
-    : and(eq(databases.workspaceId, input.workspaceId), isNull(databases.archivedAt));
+    : and(eq(databases.workspaceId, input.workspaceId), eq(databases.archived, false));
 
   const rows = await handle
     .select()
@@ -234,7 +216,7 @@ export async function insertDatabase(
       propertiesSchema: input.propertiesSchema,
       isInline: input.isInline,
       parentPageId: input.parentPageId,
-      archivedAt: input.archived ? new Date() : null,
+      archived: input.archived,
     })
     .returning();
   return toDatabaseRecord(row);
@@ -259,11 +241,10 @@ export interface UpdateDatabaseInput {
  * UPDATE — which matches Mongoose, where `save()` with no modified path writes
  * nothing at all.
  *
- * Archiving is idempotent in the TIMESTAMP: re-archiving an already-archived
- * database keeps the original instant. Note that `updatedAt` still moves on
- * any UPDATE that reaches the database, including one that writes a field its
- * current value — Mongoose's `save()` skipped the write entirely in that case.
- * That difference is general to this port rather than particular to archiving.
+ * Note that `updatedAt` moves on any UPDATE that reaches the database,
+ * including one writing a field its current value — Mongoose's `save()`
+ * skipped the write entirely in that case. That difference is general to this
+ * port rather than particular to any one field.
  */
 export async function updateDatabase(
   handle: StationHandle,
@@ -274,11 +255,7 @@ export async function updateDatabase(
   if (patch.name !== undefined) values.name = patch.name;
   if (patch.icon !== undefined) values.icon = patch.icon;
   if (patch.cover !== undefined) values.cover = patch.cover;
-  if (patch.archived !== undefined) {
-    values.archivedAt = patch.archived
-      ? sql`coalesce(${databases.archivedAt}, ${nowIso()}::timestamptz)`
-      : null;
-  }
+  if (patch.archived !== undefined) values.archived = patch.archived;
 
   if (Object.keys(values).length === 0) return findDatabaseById(handle, id);
 

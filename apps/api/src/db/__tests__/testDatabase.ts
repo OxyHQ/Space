@@ -159,15 +159,19 @@ export async function closeTestDb(): Promise<void> {
 }
 
 /**
- * A per-file id prefix.
+ * A prefix no other test file can produce, for every id a file writes.
  *
- * Every `*.pgdb.test.ts` shares one database, so any assertion that aggregates
- * reads sibling files' rows unless it is scoped. Three collisions in one night
- * in a sibling repo each looked like something else: an unscoped sweep count, a
- * duplicate key raised on a fixture, and a `count(*)` that read 2 until another
- * file seeded four more. Scoping at the point of WRITING is what prevents it,
+ * Every `*.pgdb.test.ts` in this package shares ONE database, so an assertion
+ * that aggregates over a whole table passes alone and fails beside a sibling —
  * and the pre-existing assertion is usually the bug the new file merely
- * reveals — so the fix is to scope, never to rename the newcomer's fixtures.
+ * reveals, so the fix is to scope it, never to rename the newcomer's fixtures.
+ * Three collisions in one night in a sibling repo each looked like something
+ * else: an unscoped sweep count, a duplicate key raised on a fixture, and a
+ * `count(*)` that read 2 until another file seeded four more.
+ *
+ * Tables that hang off a foreign key can scope through {@link seedWorkspace}
+ * instead; this is for the ones that do not, where there is no parent row to
+ * make ownership structural.
  */
 export function testScope(label: string): string {
   return `${label}-${randomBytes(8).toString('hex')}`;
@@ -178,12 +182,15 @@ export function testScope(label: string): string {
  * aggregate can be scoped to ids the file owns.
  *
  * `databases.workspaceId` is a real foreign key, so this is not optional
- * bookkeeping — it is the only way to insert a database at all.
+ * bookkeeping — it is the only way to insert a database at all. The name and
+ * owner go through {@link testScope} so that two files passing the same label
+ * still cannot collide on an assertion that aggregates over `ownerId`.
  */
 export async function seedWorkspace(db: TestDatabase, label: string): Promise<string> {
+  const scope = testScope(label);
   const [row] = await db
     .insert(schema.workspaces)
-    .values({ name: label, ownerId: `owner-${label}` })
+    .values({ name: scope, ownerId: `owner-${scope}` })
     .returning({ id: schema.workspaces.id });
   return row.id;
 }
