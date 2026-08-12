@@ -284,6 +284,38 @@ describe('listing and pagination', () => {
 
     expect(rows).toHaveLength(1);
   });
+
+  /**
+   * `type` is a filter the admin route passes (`billing-admin.ts`) and this
+   * signature did not accept until the rewiring, so the clause was never
+   * emitted: the admin saw every type while the UI claimed one was selected.
+   *
+   * Asserted in BOTH directions on purpose. "The refund is present" would pass
+   * against a filter that does nothing at all — the assertion that can only hold
+   * when the clause is real is that the OTHER type is absent.
+   */
+  it('filters by transaction type, and excludes the types not asked for', async () => {
+    const userId = testScope('tx-type');
+    await db.insert(transactions).values([
+      { oxyUserId: userId, type: 'refund', amount: 1, currency: 'usd', credits: 0 },
+      { oxyUserId: userId, type: 'credit_purchase', amount: 2, currency: 'usd', credits: 5 },
+    ]);
+
+    const refunds = await listTransactions(
+      db,
+      { oxyUserId: userId, type: 'refund' },
+      { limit: 50, offset: 0 },
+    );
+
+    expect(refunds).toHaveLength(1);
+    expect(refunds[0]?.type).toBe('refund');
+    expect(refunds.some((r) => r.type === 'credit_purchase')).toBe(false);
+    expect(await countTransactions(db, { oxyUserId: userId, type: 'refund' })).toBe(1);
+
+    // Control: both rows exist, so the 1 above is a filter and not an empty
+    // fixture — the failure a one-sided assertion cannot tell apart.
+    expect(await countTransactions(db, { oxyUserId: userId })).toBe(2);
+  });
 });
 
 describe('column defaults', () => {

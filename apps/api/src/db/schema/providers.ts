@@ -308,8 +308,8 @@ export const providerKeys = pgTable(
  *
  * `internal/providers/models/api-usage.ts` declares no `expireAfterSeconds` —
  * the whole-repo census finds five TTL indexes and this is not one of them. The
- * 90-day TTL that looks like it belongs here is on `models/api-key-usage.ts`, a
- * different model owned by the billing domain. So this table gets no expiry
+ * 90-day TTL that looks like it belongs here is the billing domain's own, on
+ * `api_key_usage`. So this table gets no expiry
  * registry entry: inventing a 90-day retention would be a new invariant that
  * silently starts deleting rows nobody agreed to delete.
  *

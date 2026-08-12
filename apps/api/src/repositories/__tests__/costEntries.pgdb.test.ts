@@ -44,32 +44,49 @@ afterAll(closeTestDb);
 
 describe('internal provider names stay internal', () => {
   /**
-   * `cost-tracker.ts:303` marks `costByActualProvider` INTERNAL ONLY. The
-   * per-user reads exist for a user's own dashboard, so neither may carry the
-   * provider that actually served the request.
+   * `cost-tracker.ts:303` marks `costByActualProvider` INTERNAL ONLY.
    *
-   * The control matters as much as the assertion: `listGlobal` DOES return
-   * them, which proves the columns are populated and that the absence above is
-   * a projection rather than an empty table.
+   * The line the projection draws is around what REACHES A RESPONSE, not around
+   * what a computation may read, and the two reads sit on opposite sides of it:
+   *
+   *  - `listRecentForUser` feeds `getUserDashboardData().recentActivity`, whose
+   *    rows are serialised straight to the client. It must not carry the pair.
+   *  - `listForUser` feeds `getUserCostSummary`, which returns only scalars and
+   *    maps keyed by `clarityModelId`. It MUST carry the pair, because
+   *    `calculateCost(provider, modelId, ...)` resolves pricing from
+   *    `actualModelId`; projected away, that argument is `undefined` at every
+   *    call site, `getModelPricing` falls back to a default, and `cacheSavings`
+   *    comes back a plausible wrong number with nothing thrown.
+   *
+   * The control matters as much as the assertion: `listGlobal` returning them
+   * proves the columns are populated, so the absence below is a projection
+   * rather than an empty table.
    */
-  it('the per-user reads carry no provider identity, and the admin read does', async () => {
+  it('the dashboard read carries no provider identity; the summary read and the admin read do', async () => {
     const userId = own('user');
     await record({ userId, actualProvider: 'anthropic', actualModelId: 'claude-internal' });
 
-    const forUser = await costs.listForUser(db, userId);
     const recent = await costs.listRecentForUser(db, userId);
 
-    expect(forUser).toHaveLength(1);
-    expect(forUser[0]).not.toHaveProperty('actualProvider');
-    expect(forUser[0]).not.toHaveProperty('actualModelId');
+    expect(recent).toHaveLength(1);
     expect(recent[0]).not.toHaveProperty('actualProvider');
-    expect(JSON.stringify(forUser)).not.toContain('anthropic');
+    expect(recent[0]).not.toHaveProperty('actualModelId');
+    expect(JSON.stringify(recent)).not.toContain('anthropic');
     expect(JSON.stringify(recent)).not.toContain('claude-internal');
 
     // Control: the values really are stored, and the admin roll-up sees them.
     const global = (await costs.listGlobal(db)).filter((row) => row.userId === userId);
     expect(global[0]?.actualProvider).toBe('anthropic');
     expect(global[0]?.actualModelId).toBe('claude-internal');
+
+    // The summary read deliberately keeps them, so `calculateCost` has a model
+    // id to price. Asserted rather than assumed: re-narrowing this to the
+    // user-facing columns is the tidy-looking change that silently zeroes every
+    // cache-savings figure, and it would otherwise break nothing visible.
+    const forUser = await costs.listForUser(db, userId);
+    expect(forUser).toHaveLength(1);
+    expect(forUser[0]?.actualProvider).toBe('anthropic');
+    expect(forUser[0]?.actualModelId).toBe('claude-internal');
   });
 
   /** The Clarity model the caller asked for IS safe to show, and must be. */

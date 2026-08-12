@@ -6,6 +6,7 @@ import {
   findLiveSubscription,
   findNewestLiveSubscription,
   listLiveSubscriptions,
+  listSubscriptions,
   listSubscriptionsByUser,
   setCancelAtPeriodEnd,
   updateSubscriptionPlan,
@@ -312,6 +313,44 @@ describe('updates', () => {
     expect(updated?.planName).toBe('Enterprise');
     expect(updated?.planPrice).toBe(120000);
     expect(updated?.billingPeriod).toBe('annual');
+  });
+});
+
+describe('admin filters', () => {
+  /**
+   * `product` filters `planProduct` — the flattened `'plan.product'` the admin
+   * route's Mongo query reached. This signature did not accept it until the
+   * rewiring, so the clause was silently dropped and the admin saw every
+   * product's subscriptions while the UI claimed one was selected.
+   *
+   * Both directions, for the reason given on the matching transactions test:
+   * "the clarity row is present" holds just as well against a filter that does
+   * nothing.
+   */
+  it('filters by plan product, and excludes the products not asked for', async () => {
+    const userId = testScope('sub-product');
+    await upsertSubscriptionFromStripe(db, stripeValues(userId));
+    await upsertSubscriptionFromStripe(
+      db,
+      stripeValues(userId, {
+        stripeSubscriptionId: `sub_${userId}_codea`,
+        planProduct: 'codea',
+      }),
+    );
+
+    const clarity = await listSubscriptions(
+      db,
+      { oxyUserId: userId, product: 'clarity' },
+      { limit: 50, offset: 0 },
+    );
+
+    expect(clarity).toHaveLength(1);
+    expect(clarity[0]?.planProduct).toBe('clarity');
+    expect(clarity.some((r) => r.planProduct === 'codea')).toBe(false);
+    expect(await countSubscriptions(db, { oxyUserId: userId, product: 'clarity' })).toBe(1);
+
+    // Control: both rows exist, so the 1 above is a filter, not an empty fixture.
+    expect(await countSubscriptions(db, { oxyUserId: userId })).toBe(2);
   });
 });
 
