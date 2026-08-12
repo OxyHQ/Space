@@ -1,11 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
-import mongoose from 'mongoose';
-import { Workspace } from '../models/workspace.js';
+import { getDb } from '../db/client.js';
+import { hasRole, type WorkspaceRole } from '../db/schema/workspaces.js';
 import {
-  WorkspaceMember,
-  hasRole,
-  type WorkspaceRole,
-} from '../models/workspace-member.js';
+  addMemberIfAbsent,
+  createPersonalWorkspaceIfAbsent,
+  findLiveWorkspaceById,
+  findMembership,
+  findPersonalWorkspace,
+} from '../repositories/workspaces.js';
 import { oxyClient } from './auth.js';
 import { log } from '../lib/logger.js';
 
@@ -92,17 +94,20 @@ export async function requireWorkspaceMember(
       return;
     }
 
-    if (!mongoose.isValidObjectId(workspaceId)) {
-      res.status(400).json({ error: 'Invalid workspace id' });
-      return;
-    }
-
+    // No id-SHAPE gate. The Mongoose version rejected anything that was not a
+    // 24-character ObjectId, which rejects every uuidv7 this schema produces.
+    // A malformed id now simply matches no row and falls through to the 404
+    // below -- the same answer, reached by asking the database rather than by
+    // guessing from the string.
+    const db = getDb();
     const [workspace, member] = await Promise.all([
-      Workspace.findById(workspaceId),
-      WorkspaceMember.findOne({ workspaceId, userId: req.user.id }),
+      findLiveWorkspaceById(db, workspaceId),
+      findMembership(db, workspaceId, req.user.id),
     ]);
 
-    if (!workspace || workspace.archivedAt) {
+    // `findLiveWorkspaceById` folds "missing" and "archived" into one null, the
+    // way both callers already treated them.
+    if (!workspace) {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
@@ -114,7 +119,7 @@ export async function requireWorkspaceMember(
 
     req.workspaceDoc = workspace;
     req.member = member;
-    req.workspace = { id: workspace.id, role: member.role };
+    req.workspace = { id: workspace.id, role: member.role as WorkspaceRole };
     next();
   } catch (error: unknown) {
     log.general.error({ err: error }, 'requireWorkspaceMember failed');
@@ -207,7 +212,8 @@ export async function ensurePersonalWorkspace(
     }
 
     const userId = req.user.id;
-    const existing = await Workspace.findOne({ ownerId: userId, isPersonal: true });
+    const db = getDb();
+    const existing = await findPersonalWorkspace(db, userId);
     if (existing) {
       next();
       return;
@@ -240,49 +246,27 @@ export async function ensurePersonalWorkspace(
 
     const name = defaultPersonalWorkspaceName(displayUser);
 
-    let workspaceId: mongoose.Types.ObjectId;
-    try {
-      const created = await Workspace.create({
-        name,
-        icon: null,
-        ownerId: userId,
-        isPersonal: true,
-      });
-      workspaceId = created._id as mongoose.Types.ObjectId;
-    } catch (createErr: unknown) {
-      // Race: another request created the personal workspace concurrently.
-      // Mongo duplicate key error has code 11000.
-      const code = (createErr as { code?: number } | null)?.code;
-      if (code === 11000) {
-        const existingAfterRace = await Workspace.findOne({
-          ownerId: userId,
-          isPersonal: true,
-        });
-        if (!existingAfterRace) {
-          throw createErr;
-        }
-        next();
-        return;
-      }
-      throw createErr;
+    // Two parallel requests for a brand-new user race here. The Mongo version
+    // caught error code 11000 on each insert; on Postgres that would be wrong
+    // twice over -- a failed statement aborts the surrounding transaction, and
+    // an exception cannot tell a duplicate from a dropped connection, so the
+    // catch would report "already provisioned" for an infrastructure failure.
+    // `ON CONFLICT ... DO NOTHING RETURNING` makes the EMPTY RESULT the answer
+    // instead, and a real failure still propagates.
+    const created = await createPersonalWorkspaceIfAbsent(db, { name, ownerId: userId });
+    if (!created) {
+      // Lost the race. The winner also creates the owner membership, so there
+      // is nothing left to do.
+      next();
+      return;
     }
 
-    // Owner membership row. Same race story — owner row may have been
-    // created by the winning request; tolerate duplicate key.
-    try {
-      await WorkspaceMember.create({
-        workspaceId,
-        userId,
-        role: 'owner',
-        invitedBy: null,
-        joinedAt: new Date(),
-      });
-    } catch (memberErr: unknown) {
-      const code = (memberErr as { code?: number } | null)?.code;
-      if (code !== 11000) {
-        throw memberErr;
-      }
-    }
+    await addMemberIfAbsent(db, {
+      workspaceId: created.id,
+      userId,
+      role: 'owner',
+      invitedBy: null,
+    });
 
     next();
   } catch (error: unknown) {
