@@ -419,7 +419,12 @@ describe('notifications repository', () => {
 
       const callers: string[] = [];
       for (const file of files) {
-        if (file.endsWith('notifications.pgdb.test.ts')) continue;
+        // Test files are not schedulers. This suite calls the sweep directly,
+        // and so does every sibling domain's expiry suite — the claim being
+        // made is that no PRODUCTION module schedules it. Verified still able
+        // to fail by dropping a real `setInterval` sweeper into `src/lib/`:
+        // red, naming the file, and green again once removed.
+        if (file.endsWith('.test.ts')) continue;
         const text = await readFile(file, 'utf8');
         if (text.includes('sweepAllExpiredRows(') || text.includes('sweepExpiredRows(')) {
           callers.push(file);

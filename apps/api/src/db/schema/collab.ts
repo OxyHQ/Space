@@ -10,6 +10,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { createdAt, generatedId, inList, textArrayLiteral, timestamptz, updatedAt } from '@oxyhq/db';
+import { blocks, pages } from './pages.js';
 import { workspaces } from './workspaces.js';
 
 /**
@@ -18,11 +19,6 @@ import { workspaces } from './workspaces.js';
  *
  * Conventions come from `workspaces.ts` — read it first. What is specific here:
  *
- * - `pageId` / `blockId` are `text` with NO foreign key. The `pages` and
- *   `blocks` tables are ported on a sibling branch and do not exist here yet,
- *   so declaring the reference would not compile. Adding it is a follow-up once
- *   both branches have landed; until then a comment can name a page that never
- *   existed and Postgres will not object, exactly as Mongo did not.
  * - `oxyUserId` / `authorId` / `createdBy` are `text`: Oxy user ids are opaque
  *   identifiers issued by the Oxy auth service and there is no users table to
  *   point at. The Mongo models typed three of them as `ObjectId` with
@@ -39,10 +35,39 @@ export const comments = pgTable(
     workspaceId: text()
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
-    /** FK pending: see the file header. */
-    pageId: text().notNull(),
-    /** null = page-level comment, not anchored to a specific block. */
-    blockId: text(),
+    /**
+     * CASCADE, because a comment on a hard-deleted page is unreachable.
+     *
+     * Nothing deleted comments alongside a page in Mongo — all four hard-delete
+     * paths (`routes/pages.ts:478-479`, `routes/workspaces.ts:617-618`,
+     * `routes/blocks.ts:598`, `routes/databases.ts:770-771`) touch only Block
+     * and Page — so the rows survived, orphaned. Both list queries reach a
+     * comment through its page or its block, so an orphan was already invisible
+     * garbage; the cascade collects it and changes nothing observable.
+     *
+     * NOT `restrict`: that would make all four of those deletes fail with a
+     * foreign-key violation the moment a page carried a comment.
+     */
+    pageId: text()
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
+    /**
+     * null = page-level comment, not anchored to a specific block.
+     *
+     * SET NULL, and the difference from `pageId` above is the whole point.
+     * `DELETE /blocks/:id` deletes a block and its descendants while the PAGE
+     * SURVIVES (`routes/blocks.ts:598`) — an ordinary editing action. The page
+     * comment list selects on `pageId`, not `blockId`
+     * (`routes/comments.ts:383`), so a comment whose block was deleted is still
+     * returned and still visible today, merely carrying a dangling id.
+     *
+     * CASCADE here would therefore delete a visible comment thread every time
+     * someone removes a paragraph, presenting as "my comments disappeared" with
+     * no error anywhere. SET NULL keeps the comment exactly as visible as it is
+     * now and drops the dangling reference, which is the same call the sibling
+     * port made on `pages.parentId` for the same reason.
+     */
+    blockId: text().references(() => blocks.id, { onDelete: 'set null' }),
     /**
      * null = top-level thread; set = reply.
      *
@@ -127,8 +152,15 @@ export const shareLinks = pgTable(
   'share_links',
   {
     id: generatedId(),
-    /** FK pending: see the file header. */
-    pageId: text().notNull(),
+    /**
+     * CASCADE: a share link to a hard-deleted page grants access to nothing.
+     * `GET /api/share/:token` already 404s once the page is gone
+     * (`routes/share-links.ts:316-320`), so the row is dead weight that still
+     * occupies its unique token.
+     */
+    pageId: text()
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
     /**
      * The url-safe random token, stored VERBATIM.
      *
