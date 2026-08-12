@@ -8,7 +8,8 @@ import { runAfterChatHooks } from './hooks/index.js';
 import { sendNotification } from './notification-service.js';
 import { log } from './logger.js';
 import type { ChatMessage } from './message-converter.js';
-import { Conversation } from '../models/conversation.js';
+import { existsForUser } from '../repositories/conversations.js';
+import { existsForConversation } from '../repositories/messages.js';
 
 export interface LifecycleContext {
   userId?: string;
@@ -77,13 +78,12 @@ export async function startParallelTitleGeneration(
   conversationId: string,
   messages: ChatMessage[],
 ): Promise<string | null> {
-  const existing = await Conversation.findOne(
-    { oxyUserId: userId, conversationId },
-    { _id: 1 }
-  ).lean();
-  const hasMessages = existing
-    ? await (await import('../models/message.js')).Message.exists({ conversationId })
-    : false;
+  // The old `findOne(..., { _id: 1 }).lean()` existed only to be tested for
+  // truthiness, so it is a boolean now. The message check was reached through a
+  // dynamic `await import('../models/message.js')` — a spelling no static
+  // import census sees — and is a plain call here.
+  const existing = await existsForUser({ oxyUserId: userId, conversationId });
+  const hasMessages = existing ? await existsForConversation(conversationId) : false;
   if (existing && hasMessages) return null;
 
   const firstUserMsgRaw = messages.find((m: ChatMessage) => m.role === 'user')?.content;

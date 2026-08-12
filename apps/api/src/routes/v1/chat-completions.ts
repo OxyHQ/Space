@@ -5,7 +5,7 @@ import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } fr
 import { getClarityModel, getModelMappingsForTier } from '../../lib/gateway-client.js';
 import { getDb } from '../../db/client.js';
 import { getOrCreateUserCredits } from '../../repositories/userCredits.js';
-import { Conversation } from '../../models/conversation.js';
+import { updateTitle } from '../../repositories/conversations.js';
 import { reserveCredits, refundReservation, type CreditReservation, type CreditUsage } from '../../lib/credits-manager.js';
 import {
   saveConversationResult,
@@ -968,10 +968,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         const title = await titlePromise;
         if (title) {
           res.write(`event: oxystation.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
-          await Conversation.updateOne(
-            { oxyUserId: req.user.id, conversationId },
-            { $set: { title } },
-          );
+          await updateTitle({ oxyUserId: req.user.id, conversationId }, title);
           log.v1.info({ conversationId, title }, 'Auto-generated conversation title');
         }
       } catch (err) {

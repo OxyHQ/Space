@@ -16,6 +16,16 @@ import { createdAt, generatedId, inList, updatedAt } from '@oxyhq/db';
  * `services/chat.service.ts:145,152` and `lib/user-context.ts:19`. The census
  * behind that claim, including the negative controls, is in
  * `__tests__/aiChat.deadModels.test.ts`.
+ *
+ * PROVENANCE: `src/models/conversation.ts` and `src/models/message.ts` were
+ * DELETED at the cutover, and every `models/…` and `routes/…` line reference
+ * below was taken against the pre-rewiring tree. They are historical citations,
+ * not addresses to open — `git log --diff-filter=D -- apps/api/src/models/`
+ * finds the commit that removed the two modules, and the rewired call sites now
+ * live in `repositories/conversations.ts` and `repositories/messages.ts`, whose
+ * headers list them. The field lists the Mongoose schemas declared survive as a
+ * frozen record in `__tests__/aiChat.columnParity.test.ts`, which is what keeps
+ * the backfill's column parity checkable now that the models are gone.
  */
 
 /** Source apps a conversation can arrive from. `models/conversation.ts:71`. */
