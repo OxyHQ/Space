@@ -16,4 +16,5 @@
  * entirely, and only the count tells those apart.
  */
 
+export * from './aiChat.js';
 export * from './workspaces.js';
