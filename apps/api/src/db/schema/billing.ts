@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
-  doublePrecision,
   index,
   integer,
   jsonb,

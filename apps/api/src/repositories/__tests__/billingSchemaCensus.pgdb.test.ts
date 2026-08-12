@@ -16,7 +16,6 @@ import {
   closeTestDb,
   getTestDb,
   type TestDatabase,
-  testScope,
 } from '../../db/__tests__/testDatabase.js';
 
 let db: TestDatabase;
