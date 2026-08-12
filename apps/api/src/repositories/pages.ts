@@ -240,9 +240,16 @@ export interface UpdatePageInput {
  * `undefined` and `null` is the whole point: `icon`, `cover` and `parentId` are
  * nullable and the route accepts an explicit `null` for each, so `undefined`
  * has to mean "leave it alone" while `null` means "write NULL". `$set: { x:
- * undefined }` was a no-op in Mongo and is an erasure in Postgres; the guard
- * is written out here rather than left to drizzle's own filtering, because a
- * behaviour this destructive should be visible in the file that depends on it.
+ * undefined }` was a no-op in Mongo and is an erasure in Postgres.
+ *
+ * Measured, so the comment does not overclaim: drizzle's own `.set()` ALREADY
+ * drops `undefined` values, so removing these guards does not reintroduce the
+ * erasure — the contract holds either way, and the behavioural assertion in
+ * `pages.pgdb.test.ts` cannot tell the two apart. What the guards buy is that
+ * the rule is stated in the file that depends on it rather than inherited from
+ * a library detail, and that an all-undefined patch reaches the explicit error
+ * below instead of drizzle's 'No values to set'. That last difference is the
+ * one an assertion can see, and it is the one the suite pins.
  *
  * Returns `undefined` when no row has that id — the route already 404s on the
  * preceding `findById`, so this is the same answer arriving one query earlier.
@@ -383,8 +390,14 @@ export async function deletePageTree(db: PgHandle, rootId: string): Promise<numb
     )
     select count(*)::int as deleted_count from deleted
   `);
-  const first = rows[0];
-  return typeof first?.deleted_count === 'number' ? first.deleted_count : 0;
+  // Loud rather than 0: `count(*)` without the `::int` decodes as a string, and
+  // a silent fallback would report "deleted nothing" for a statement that
+  // deleted a subtree.
+  const deleted = rows[0]?.deleted_count;
+  if (typeof deleted !== 'number') {
+    throw new Error(`deletePageTree read a non-numeric count: ${typeof deleted}`);
+  }
+  return deleted;
 }
 
 /**
