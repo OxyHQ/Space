@@ -24,3 +24,4 @@ export * from './collab.js';
 export * from './databases.js';
 export * from './pages.js';
 export * from './workspaces.js';
+export * from './billing.js';
