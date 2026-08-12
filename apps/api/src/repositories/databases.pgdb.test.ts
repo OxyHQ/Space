@@ -131,7 +131,7 @@ describe('insertDatabase', () => {
     expect(read).toEqual(record);
   });
 
-  it('stamps archivedAt when created archived', async () => {
+  it('honours archived at creation time', async () => {
     const record = await insertDatabase(db, databaseInput({ archived: true }));
     expect(record.archived).toBe(true);
   });
@@ -228,31 +228,25 @@ describe('updateDatabase', () => {
     expect(cleared?.name).toBe('Renamed');
   });
 
-  it('archives, un-archives, and keeps the original archive instant', async () => {
+  /**
+   * Two-way, and stored as the boolean Mongo stores. `PATCH /databases/:id`
+   * un-archives (`routes/databases.ts:731`), so a one-way timestamp stamp
+   * would not describe this field — and there is no true `archived_at` for a
+   * row the backfill finds already archived.
+   */
+  it('archives and un-archives, storing the flag Mongo stored', async () => {
     const record = await insertDatabase(db, databaseInput());
+    expect(record.archived).toBe(false);
 
-    const archived = await updateDatabase(db, record.id, { archived: true });
-    expect(archived?.archived).toBe(true);
-    const [stamped] = await db
-      .select({ archivedAt: databases.archivedAt })
+    expect((await updateDatabase(db, record.id, { archived: true }))?.archived).toBe(true);
+    expect((await updateDatabase(db, record.id, { archived: true }))?.archived).toBe(true);
+    expect((await updateDatabase(db, record.id, { archived: false }))?.archived).toBe(false);
+
+    const [stored] = await db
+      .select({ archived: databases.archived })
       .from(databases)
       .where(eq(databases.id, record.id));
-
-    const again = await updateDatabase(db, record.id, { archived: true });
-    expect(again?.archived).toBe(true);
-    const [restamped] = await db
-      .select({ archivedAt: databases.archivedAt })
-      .from(databases)
-      .where(eq(databases.id, record.id));
-    expect(restamped.archivedAt?.getTime()).toBe(stamped.archivedAt?.getTime());
-
-    const restored = await updateDatabase(db, record.id, { archived: false });
-    expect(restored?.archived).toBe(false);
-    const [cleared] = await db
-      .select({ archivedAt: databases.archivedAt })
-      .from(databases)
-      .where(eq(databases.id, record.id));
-    expect(cleared.archivedAt).toBeNull();
+    expect(stored.archived).toBe(false);
   });
 
   it('writes nothing at all for a patch with no defined keys', async () => {

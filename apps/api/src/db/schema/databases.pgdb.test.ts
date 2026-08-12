@@ -237,7 +237,7 @@ describe('column defaults', () => {
     expect(database.propertiesSchema).toEqual({ properties: [] });
     expect(database.isInline).toBe(false);
     expect(database.parentPageId).toBeNull();
-    expect(database.archivedAt).toBeNull();
+    expect(database.archived).toBe(false);
     expect(database.createdAt).toBeInstanceOf(Date);
     expect(database.updatedAt).toBeInstanceOf(Date);
 
@@ -310,7 +310,7 @@ describe('columns', () => {
         'properties_schema',
         'is_inline',
         'parent_page_id',
-        'archived_at',
+        'archived',
         'created_at',
         'updated_at',
       ]),

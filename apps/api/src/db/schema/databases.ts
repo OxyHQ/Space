@@ -9,7 +9,7 @@ import {
   pgTable,
   text,
 } from 'drizzle-orm/pg-core';
-import { createdAt, generatedId, inList, timestamptz, updatedAt } from '@oxyhq/db';
+import { createdAt, generatedId, inList, updatedAt } from '@oxyhq/db';
 import { workspaces } from './workspaces.js';
 
 /**
@@ -297,13 +297,23 @@ export const databases = pgTable(
      */
     parentPageId: text(),
     /**
-     * Soft delete. Mongo stored a boolean `archived`; this follows
-     * `workspaces.archivedAt` instead, so the whole schema expresses "soft
-     * deleted" one way. The wire format is unaffected — the repository accepts
-     * and returns `archived: boolean` and this column is the only place the
-     * representation differs.
+     * Soft delete — a boolean, matching `models/database.ts:194`.
+     *
+     * NOT `archivedAt`, despite `workspaces.archivedAt` sitting next door.
+     * That column is a faithful port of a field Mongo genuinely stores as a
+     * Date (`models/workspace.ts:43`), not a house convention about how soft
+     * deletes are represented. This model has a boolean and no companion
+     * timestamp anywhere, so a timestamp here would be a fact the backfill
+     * cannot supply: an already-archived row has no true `archived_at`, only
+     * the migration instant or `updatedAt`, and both are lies that a future
+     * trash auto-purge would act on.
+     *
+     * It is also two-way rather than a one-way stamp — `PATCH /databases/:id`
+     * accepts `archived: false` and un-archives (`routes/databases.ts:731`),
+     * unlike the workspace route, which only ever stamps
+     * (`routes/workspaces.ts:325-332`).
      */
-    archivedAt: timestamptz(),
+    archived: boolean().notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -321,7 +331,7 @@ export const databases = pgTable(
      */
     index('databases_workspace_archived_updated_idx').on(
       t.workspaceId,
-      t.archivedAt,
+      t.archived,
       t.updatedAt.desc(),
     ),
     // Ported verbatim from `DatabaseSchemaDef.index({ parentPageId: 1 })` —
