@@ -3,10 +3,9 @@
  * Uses $setOnInsert for idempotency — re-running never overwrites admin edits.
  */
 
-import { CreditPackage } from '../models/credit-package.js';
-import { connectDB } from './db.js';
+import { getDb } from '../../../db/client.js';
+import { seedPackage } from '../../../repositories/credit-packages.js';
 import { log } from '../../../lib/logger.js';
-import { isDuplicateKeyError } from '../../../lib/errors/index.js';
 
 interface CreditPackageSeed {
   packageId: string;
@@ -25,40 +24,38 @@ const SEED_PACKAGES: CreditPackageSeed[] = [
 ];
 
 export async function seedCreditPackages(): Promise<{ seeded: number; skipped: number }> {
-  await connectDB();
+  const db = getDb();
 
   let seeded = 0;
   let skipped = 0;
 
   for (const pkgData of SEED_PACKAGES) {
     try {
-      const result = await CreditPackage.updateOne(
-        { packageId: pkgData.packageId },
-        {
-          $setOnInsert: {
-            name: pkgData.name,
-            credits: pkgData.credits,
-            price: pkgData.price,
-            currency: pkgData.currency,
-            sortOrder: pkgData.sortOrder,
-            isActive: true,
-          },
-        },
-        { upsert: true }
-      );
+      // `ON CONFLICT DO NOTHING RETURNING`, so an empty result IS "already
+      // seeded". The source caught a duplicate-key error to reach the same
+      // conclusion, which on Postgres cannot distinguish a duplicate from a
+      // dropped connection — that catch would answer "already seeded" to an
+      // infrastructure failure, and a failed statement also aborts the whole
+      // transaction, so the recovery would not work at all. Here no statement
+      // fails and a real failure still propagates to the caller.
+      const inserted = await seedPackage(db, {
+        packageId: pkgData.packageId,
+        name: pkgData.name,
+        credits: pkgData.credits,
+        price: pkgData.price,
+        currency: pkgData.currency,
+        sortOrder: pkgData.sortOrder,
+        isActive: true,
+      });
 
-      if (result.upsertedCount > 0) {
+      if (inserted) {
         seeded++;
         log.seed.info({ packageId: pkgData.packageId }, 'Created CreditPackage');
       } else {
         skipped++;
       }
     } catch (error: unknown) {
-      if (isDuplicateKeyError(error)) {
-        skipped++;
-      } else {
-        log.seed.error({ err: error, packageId: pkgData.packageId }, 'Error seeding credit package');
-      }
+      log.seed.error({ err: error, packageId: pkgData.packageId }, 'Error seeding credit package');
     }
   }
 

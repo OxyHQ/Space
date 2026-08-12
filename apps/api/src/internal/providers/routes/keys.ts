@@ -5,7 +5,25 @@
 
 import express, { Request, Response } from 'express';
 import crypto from 'crypto';
-import { ProviderKey } from '../models/provider-key';
+import { getDb } from '../../../db/client.js';
+import {
+  countActiveKeys,
+  createKey,
+  deleteKey,
+  findById,
+  findByKeyHash,
+  findPublicById,
+  hashProviderKey,
+  listKeys,
+  listKeysForDiagnostics,
+  patchKey,
+  providerKeyPrefix,
+  resetCooldowns,
+  resetSpend,
+  rotateKey,
+  setActive,
+  type ProviderKeyPatch,
+} from '../../../repositories/provider-keys.js';
 import { invalidateKeyCache } from '../lib/key-manager';
 import { clearHealthCache } from '../lib/provider-health';
 import { broadcastKeysUpdate } from '../lib/broadcast-helpers';
@@ -35,6 +53,27 @@ function sanitizeQueryParam(value: unknown): string | undefined {
 }
 
 /**
+ * The rate-limit columns a client may set.
+ *
+ * Mongo nested these under a `rateLimit` sub-document; the table flattens them
+ * into eight nullable columns, where "unset" means "no limit of this kind".
+ * Reads already return the flat row, so the write half is flat too — the same
+ * decision, for the same reason, as in `routes/models.ts`.
+ */
+function writableRateLimits(body: Record<string, unknown>) {
+  return {
+    rateLimitRps: body.rateLimitRps as number | null | undefined,
+    rateLimitRpm: body.rateLimitRpm as number | null | undefined,
+    rateLimitRph: body.rateLimitRph as number | null | undefined,
+    rateLimitRpd: body.rateLimitRpd as number | null | undefined,
+    rateLimitTps: body.rateLimitTps as number | null | undefined,
+    rateLimitTpm: body.rateLimitTpm as number | null | undefined,
+    rateLimitTph: body.rateLimitTph as number | null | undefined,
+    rateLimitTpd: body.rateLimitTpd as number | null | undefined,
+  };
+}
+
+/**
  * POST /v1/keys/reload
  * Invalidate all in-memory caches and reload provider configuration
  */
@@ -44,15 +83,19 @@ router.post('/reload', async (req: Request, res: Response) => {
     invalidateKeyCache();
     clearHealthCache();
 
-    // Reset all key cooldowns and failure counters
-    const cooldownResult = await ProviderKey.updateMany(
-      { $or: [{ cooldownUntil: { $ne: null } }, { consecutiveFailures: { $gt: 0 } }] },
-      { $set: { cooldownUntil: null, consecutiveFailures: 0 } }
-    );
-    const cooldownsReset = cooldownResult.modifiedCount;
+    const db = getDb();
+
+    // Reset all key cooldowns and failure counters.
+    //
+    // Mongo reported `modifiedCount`; Postgres reports only `rowCount`, which
+    // behaves like `matchedCount`. They cannot disagree here — the predicate
+    // selects rows with a non-null cooldown or a positive failure count and the
+    // update clears both, so every matched row changes. This number is shown to
+    // an operator, so an inflation would have been invisible.
+    const cooldownsReset = await resetCooldowns(db);
 
     // Compute config hash for tracking
-    const keyCount = await ProviderKey.countDocuments({ isArchived: false, isActive: true });
+    const keyCount = await countActiveKeys(db);
     const configHash = crypto
       .createHash('sha256')
       .update(JSON.stringify({ keyCount, reloadedAt: Date.now() }))
@@ -85,16 +128,12 @@ router.get('/', async (req: Request, res: Response) => {
     const environment = sanitizeQueryParam(req.query.environment);
     const active = sanitizeQueryParam(req.query.active);
 
-    // Build query
-    const query: any = {};
-    if (provider) query.provider = provider;
-    if (environment) query.environment = environment;
-    if (active !== undefined) query.isActive = active === 'true';
-
-    // Get keys (exclude keyHash and key for security)
-    const keys = await ProviderKey.find(query)
-      .select('-keyHash -key')
-      .sort({ provider: 1, priority: 1 });
+    // `listKeys` projects `PUBLIC_COLUMNS` — the port of `.select('-keyHash -key')`.
+    const keys = await listKeys(getDb(), {
+      provider,
+      environment,
+      isActive: active !== undefined ? active === 'true' : undefined,
+    });
 
     res.json({
       success: true,
@@ -117,10 +156,10 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/diagnostics', async (req: Request, res: Response) => {
   try {
-    const keys = await ProviderKey.find({ isArchived: false }).select(
-      'name provider keyPrefix isActive key isPaid currentPriority totalRequests successCount totalFailures lastFailureReason creditLimitUSD spentUSD'
-    );
+    const keys = await listKeysForDiagnostics(getDb());
 
+    // `key` is read here only to report whether one EXISTS. Its value never
+    // enters the response — `hasKeyValue` and `keyLength` are all that leave.
     const diagnostics = keys.map((k) => ({
       name: k.name,
       provider: k.provider,
@@ -173,11 +212,14 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
  * GET /v1/keys/:keyId
  * Get specific key details (without actual key value)
  */
-router.get('/:keyId', async (req: Request, res: Response) => {
+router.get('/:keyId', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    const key = await ProviderKey.findById(keyId).select('-keyHash -key');
+    // A malformed id used to throw a Mongoose CastError and surface as a 500.
+    // Ids are `text` here, so an unknown one simply matches no row and 404s —
+    // the same outcome the caller already had to handle, reached quietly.
+    const key = await findPublicById(getDb(), keyId);
 
     if (!key) {
       return res.status(404).json({
@@ -207,7 +249,7 @@ router.get('/:keyId', async (req: Request, res: Response) => {
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name, provider, key, environment, isPaid, tier, priority, rateLimit, creditLimitUSD, rateLimitResetMs } = req.body;
+    const { name, provider, key, environment, isPaid, tier, priority, creditLimitUSD, rateLimitResetMs } = req.body;
 
     // Validate required fields
     if (!name || !provider || !key) {
@@ -261,11 +303,15 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Hash the key for deduplication
-    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+    const db = getDb();
+
+    // Hash the key for deduplication. Deterministic by contract — a randomised
+    // digest would make this lookup miss and the unique index would then reject
+    // the insert with a 500 instead of this 409.
+    const keyHash = hashProviderKey(key);
 
     // Check if key already exists
-    const existing = await ProviderKey.findOne({ keyHash });
+    const existing = await findByKeyHash(db, keyHash);
     if (existing) {
       return res.status(409).json({
         success: false,
@@ -274,22 +320,19 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Extract key prefix for display
-    const keyPrefix = key.substring(0, Math.min(8, key.length)) + '...';
-
     // Create new key
-    const newKey = await ProviderKey.create({
+    const newKey = await createKey(db, {
+      ...writableRateLimits(req.body),
       name,
       provider,
       keyHash,
-      keyPrefix,
+      keyPrefix: providerKeyPrefix(key),
       key,
       environment: environment || 'production',
       isPaid: isPaid || false,
       tier: tier || 'free',
       currentPriority: priority || 10,
       originalPriority: priority || 10,
-      rateLimit: rateLimit || {},
       creditLimitUSD: creditLimitUSD ?? null,
       rateLimitResetMs: rateLimitResetMs ?? null,
       isActive: true,
@@ -301,7 +344,7 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(201).json({
       success: true,
       data: {
-        id: newKey._id,
+        id: newKey.id,
         keyPrefix: newKey.keyPrefix,
         message: 'Key added successfully',
       },
@@ -322,20 +365,31 @@ router.post('/', async (req: Request, res: Response) => {
  * PATCH /v1/keys/:keyId
  * Update key configuration (cannot update the key itself, use rotate for that)
  */
-router.patch('/:keyId', async (req: Request, res: Response) => {
+router.patch('/:keyId', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    // Allowlist of fields that can be updated via PATCH
-    const ALLOWED_FIELDS = ['name', 'isActive', 'priority', 'rateLimit', 'environment', 'isPaid', 'tier', 'creditLimitUSD', 'rateLimitResetMs'];
-    const updates: Record<string, unknown> = {};
-    for (const field of ALLOWED_FIELDS) {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
-    }
+    // The source's allow-list also carried `priority`, which is NOT a field on
+    // the model — Mongoose strict mode STRIPPED it, so a caller sending it got
+    // a 200 and no change. It is gone rather than wired to `currentPriority`:
+    // turning a silent no-op into a silent write is a behaviour change, and the
+    // two priority columns move together (`recordSuccess` restores
+    // `currentPriority` from `originalPriority`, so writing only the first would
+    // evaporate on the key's next success). A request carrying ONLY `priority`
+    // now gets an explicit 400 instead of a 200 that did nothing; making a key's
+    // priority settable is a feature, not part of this port.
+    const updates: ProviderKeyPatch = {
+      ...writableRateLimits(req.body),
+      name: req.body.name,
+      isActive: req.body.isActive,
+      environment: req.body.environment,
+      isPaid: req.body.isPaid,
+      tier: req.body.tier,
+      creditLimitUSD: req.body.creditLimitUSD,
+      rateLimitResetMs: req.body.rateLimitResetMs,
+    };
 
-    if (Object.keys(updates).length === 0) {
+    if (Object.values(updates).every((value) => value === undefined)) {
       return res.status(400).json({
         success: false,
         error: 'No valid fields to update',
@@ -343,11 +397,8 @@ router.patch('/:keyId', async (req: Request, res: Response) => {
       });
     }
 
-    const key = await ProviderKey.findByIdAndUpdate(
-      keyId,
-      { $set: updates },
-      { returnDocument: 'after', runValidators: true }
-    ).select('-keyHash -key');
+    // `undefined` never reaches the SET clause; an explicit `null` still clears.
+    const key = await patchKey(getDb(), keyId, updates);
 
     if (!key) {
       return res.status(404).json({
@@ -380,11 +431,11 @@ router.patch('/:keyId', async (req: Request, res: Response) => {
  * DELETE /v1/keys/:keyId
  * Delete a provider key
  */
-router.delete('/:keyId', async (req: Request, res: Response) => {
+router.delete('/:keyId', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    const key = await ProviderKey.findByIdAndDelete(keyId);
+    const key = await deleteKey(getDb(), keyId);
 
     if (!key) {
       return res.status(404).json({
@@ -417,7 +468,7 @@ router.delete('/:keyId', async (req: Request, res: Response) => {
  * POST /v1/keys/:keyId/rotate
  * Rotate a provider key (replace with new key)
  */
-router.post('/:keyId/rotate', async (req: Request, res: Response) => {
+router.post('/:keyId/rotate', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
     const { newKey } = req.body;
@@ -430,8 +481,10 @@ router.post('/:keyId/rotate', async (req: Request, res: Response) => {
       });
     }
 
+    const db = getDb();
+
     // Find existing key
-    const key = await ProviderKey.findById(keyId);
+    const key = await findById(db, keyId);
     if (!key) {
       return res.status(404).json({
         success: false,
@@ -440,11 +493,8 @@ router.post('/:keyId/rotate', async (req: Request, res: Response) => {
       });
     }
 
-    // Hash the new key
-    const newKeyHash = crypto.createHash('sha256').update(newKey).digest('hex');
-
     // Check if new key already exists
-    const existing = await ProviderKey.findOne({ keyHash: newKeyHash });
+    const existing = await findByKeyHash(db, hashProviderKey(newKey));
     if (existing) {
       return res.status(409).json({
         success: false,
@@ -453,27 +503,30 @@ router.post('/:keyId/rotate', async (req: Request, res: Response) => {
       });
     }
 
-    // Update key
-    const newKeyPrefix = newKey.substring(0, Math.min(8, newKey.length)) + '...';
-    key.keyHash = newKeyHash;
-    key.keyPrefix = newKeyPrefix;
-    key.key = newKey;
-    key.rotatedAt = new Date();
-    await key.save();
+    // The digest, the prefix, the secret and the stamp are one fact about one
+    // key — one statement, so no state has some of them landed.
+    const rotated = await rotateKey(db, keyId, newKey);
+    if (!rotated) {
+      return res.status(404).json({
+        success: false,
+        error: 'Key not found',
+        code: 'KEY_NOT_FOUND',
+      });
+    }
 
     // Invalidate cache
-    invalidateKeyCache(key.provider);
+    invalidateKeyCache(rotated.provider);
 
     res.json({
       success: true,
       data: {
-        keyPrefix: key.keyPrefix,
-        rotatedAt: key.rotatedAt,
+        keyPrefix: rotated.keyPrefix,
+        rotatedAt: rotated.rotatedAt,
         message: 'Key rotated successfully',
       },
     });
 
-    broadcastKeysUpdate(key.provider);
+    broadcastKeysUpdate(rotated.provider);
   } catch (error: unknown) {
     log.keys.error({ err: error }, 'Error rotating key');
     res.status(500).json({
@@ -488,15 +541,11 @@ router.post('/:keyId/rotate', async (req: Request, res: Response) => {
  * POST /v1/keys/:keyId/reset-spend
  * Reset spentUSD to 0 (e.g., after adding credit to a provider account)
  */
-router.post('/:keyId/reset-spend', async (req: Request, res: Response) => {
+router.post('/:keyId/reset-spend', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    const key = await ProviderKey.findByIdAndUpdate(
-      keyId,
-      { $set: { spentUSD: 0 } },
-      { returnDocument: 'after' }
-    ).select('-keyHash -key');
+    const key = await resetSpend(getDb(), keyId);
 
     if (!key) {
       return res.status(404).json({
@@ -530,15 +579,11 @@ router.post('/:keyId/reset-spend', async (req: Request, res: Response) => {
  * POST /v1/keys/:keyId/deactivate
  * Deactivate a key (soft delete)
  */
-router.post('/:keyId/deactivate', async (req: Request, res: Response) => {
+router.post('/:keyId/deactivate', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    const key = await ProviderKey.findByIdAndUpdate(
-      keyId,
-      { $set: { isActive: false } },
-      { returnDocument: 'after' }
-    ).select('-keyHash -key');
+    const key = await setActive(getDb(), keyId, false);
 
     if (!key) {
       return res.status(404).json({
@@ -572,15 +617,11 @@ router.post('/:keyId/deactivate', async (req: Request, res: Response) => {
  * POST /v1/keys/:keyId/activate
  * Activate a previously deactivated key
  */
-router.post('/:keyId/activate', async (req: Request, res: Response) => {
+router.post('/:keyId/activate', async (req: Request<{ keyId: string }>, res: Response) => {
   try {
     const { keyId } = req.params;
 
-    const key = await ProviderKey.findByIdAndUpdate(
-      keyId,
-      { $set: { isActive: true } },
-      { returnDocument: 'after' }
-    ).select('-keyHash -key');
+    const key = await setActive(getDb(), keyId, true);
 
     if (!key) {
       return res.status(404).json({

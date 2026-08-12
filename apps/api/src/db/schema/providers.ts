@@ -306,8 +306,9 @@ export const providerKeys = pgTable(
  *
  * ## This table has NO expiry, and that is measured rather than assumed
  *
- * `internal/providers/models/api-usage.ts` declares no `expireAfterSeconds` —
- * the whole-repo census finds five TTL indexes and this is not one of them. The
+ * `internal/providers/models/api-usage.ts` declared no `expireAfterSeconds` —
+ * that file is DELETED as of the providers rewiring, so read it at f7834e8; the
+ * whole-repo census finds five TTL indexes and this is not one of them. The
  * 90-day TTL that looks like it belongs here is the billing domain's own, on
  * `api_key_usage`. So this table gets no expiry
  * registry entry: inventing a 90-day retention would be a new invariant that
@@ -833,15 +834,16 @@ export const authHealthMetrics = pgTable(
 );
 
 /**
- * Circuit-breaker state per provider/model. Declared INLINE in
+ * Circuit-breaker state per provider/model. Was declared INLINE in
  * `src/internal/providers/lib/provider-health.ts:68` — the third invisible
  * model, and the one also retrieved by BARE NAME STRING
  * (`mongoose.models.ProviderHealth` at `routes/providers.ts:342` and
  * `seed-model-configs.ts:244`), a shape no import census can see at all. Both
- * of those sites guard on the model being absent and quietly do nothing;
- * against a table that guard has no meaning, and the rewiring must drop it
- * rather than port it — "the model was not registered" and "there was nothing
- * to reset" are the same silent outcome today.
+ * of those sites guarded on the model being absent and quietly did nothing;
+ * against a table that guard has no meaning, so the rewiring DROPPED it rather
+ * than porting it — "the model was not registered" and "there was nothing to
+ * reset" must not stay the same silent outcome. Done: both sites now call
+ * `resetAll` / `resetOpenCircuits` unguarded. Line numbers are as of f7834e8.
  */
 export const providerHealths = pgTable(
   'provider_healths',

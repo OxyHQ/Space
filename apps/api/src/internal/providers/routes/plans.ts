@@ -4,12 +4,63 @@
  */
 
 import express, { Request, Response } from 'express';
-import { Plan } from '../models/plan.js';
-import { ClarityModel } from '../models/clarity-model.js';
+import { getDb } from '../../../db/client.js';
+import {
+  createPlan,
+  deletePlan,
+  findBySlug,
+  listPlans,
+  patchPlan,
+} from '../../../repositories/plans.js';
+import { findExistingSlugs } from '../../../repositories/clarity-models.js';
 import { broadcastPlansUpdate } from '../lib/broadcast-helpers.js';
 import { log } from '../../../lib/logger.js';
 
 const router = express.Router();
+
+/**
+ * The columns a client may set. See the note in `routes/features.ts`.
+ * `planId` is the key and is never patched.
+ */
+function writablePlanFields(body: Record<string, unknown>) {
+  return {
+    name: body.name as string | undefined,
+    product: body.product as string | undefined,
+    creditsPerMonth: body.creditsPerMonth as number | undefined,
+    dailyFreeCredits: body.dailyFreeCredits as number | undefined,
+    monthlyPrice: body.monthlyPrice as number | undefined,
+    annualPrice: body.annualPrice as number | undefined,
+    currency: body.currency as string | undefined,
+    subtitle: body.subtitle as string | undefined,
+    creditsLabel: body.creditsLabel as string | undefined,
+    isFeatured: body.isFeatured as boolean | undefined,
+    sortOrder: body.sortOrder as number | undefined,
+    modelIds: body.modelIds as string[] | undefined,
+    isActive: body.isActive as boolean | undefined,
+    isFree: body.isFree as boolean | undefined,
+    stripeProductId: body.stripeProductId as string | null | undefined,
+    stripeMonthlyPriceId: body.stripeMonthlyPriceId as string | null | undefined,
+    stripeAnnualPriceId: body.stripeAnnualPriceId as string | null | undefined,
+    description: body.description as string | null | undefined,
+    notes: body.notes as string | null | undefined,
+  };
+}
+
+/**
+ * Which of these ids name no Clarity model?
+ *
+ * The source filtered `ClarityModel` on `modelId`, a field that model does not
+ * have — the slug is `clarityModelId`. In Mongo a filter on an absent path
+ * matches nothing, so `validModels` was always empty and every non-empty
+ * `modelIds` array was rejected with `INVALID_MODEL_IDS`. Matching on the real
+ * column is what both call sites plainly meant, so this validation starts
+ * working here; it is named in the port report because "always rejects" to
+ * "accepts valid input" is a behaviour change even when it is the intended one.
+ */
+async function invalidModelIds(modelIds: readonly string[]): Promise<string[]> {
+  const existing = new Set(await findExistingSlugs(getDb(), modelIds));
+  return modelIds.filter((id) => !existing.has(id.toLowerCase()));
+}
 
 /**
  * GET /v1/plans
@@ -19,11 +70,10 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { product, active } = req.query;
 
-    const query: any = {};
-    if (product && typeof product === 'string') query.product = product;
-    if (active !== undefined) query.isActive = active === 'true';
-
-    const plans = await Plan.find(query).sort({ product: 1, sortOrder: 1 }).lean();
+    const plans = await listPlans(getDb(), {
+      product: product && typeof product === 'string' ? product : undefined,
+      isActive: active !== undefined ? active === 'true' : undefined,
+    });
 
     res.json({
       success: true,
@@ -44,10 +94,10 @@ router.get('/', async (req: Request, res: Response) => {
  * GET /v1/plans/:planId
  * Get specific plan
  */
-router.get('/:planId', async (req: Request, res: Response) => {
+router.get('/:planId', async (req: Request<{ planId: string }>, res: Response) => {
   try {
     const { planId } = req.params;
-    const plan = await Plan.findOne({ planId }).lean();
+    const plan = await findBySlug(getDb(), planId);
 
     if (!plan) {
       return res.status(404).json({
@@ -77,7 +127,7 @@ router.get('/:planId', async (req: Request, res: Response) => {
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { planId, name, product, creditsPerMonth, monthlyPrice, annualPrice, currency, ...rest } = req.body;
+    const { planId, name, product, creditsPerMonth, monthlyPrice, annualPrice, currency } = req.body;
 
     if (!planId || !name || !product) {
       return res.status(400).json({
@@ -105,7 +155,8 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await Plan.findOne({ planId: planId.toLowerCase() });
+    const db = getDb();
+    const existing = await findBySlug(db, planId.toLowerCase());
     if (existing) {
       return res.status(409).json({
         success: false,
@@ -114,10 +165,10 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    if (rest.modelIds && Array.isArray(rest.modelIds) && rest.modelIds.length > 0) {
-      const validModels = await ClarityModel.find({ modelId: { $in: rest.modelIds } }).select('modelId').lean();
-      const validIds = new Set(validModels.map((m: any) => m.modelId));
-      const invalid = rest.modelIds.filter((id: string) => !validIds.has(id));
+    const fields = writablePlanFields(req.body);
+
+    if (Array.isArray(fields.modelIds) && fields.modelIds.length > 0) {
+      const invalid = await invalidModelIds(fields.modelIds);
       if (invalid.length > 0) {
         return res.status(400).json({
           success: false,
@@ -127,7 +178,8 @@ router.post('/', async (req: Request, res: Response) => {
       }
     }
 
-    const plan = await Plan.create({
+    const plan = await createPlan(db, {
+      ...fields,
       planId: planId.toLowerCase(),
       name,
       product,
@@ -135,7 +187,6 @@ router.post('/', async (req: Request, res: Response) => {
       monthlyPrice: monthlyPrice || 0,
       annualPrice: annualPrice || 0,
       currency: currency || 'usd',
-      ...rest,
     });
 
     res.status(201).json({
@@ -158,13 +209,12 @@ router.post('/', async (req: Request, res: Response) => {
  * PATCH /v1/plans/:planId
  * Update plan configuration
  */
-router.patch('/:planId', async (req: Request, res: Response) => {
+router.patch('/:planId', async (req: Request<{ planId: string }>, res: Response) => {
   try {
     const { planId } = req.params;
-    const updates = { ...req.body };
-
-    // Don't allow changing planId
-    delete updates.planId;
+    // `planId` is absent from the whitelist, which is what the source's
+    // `delete updates.planId` achieved.
+    const updates = writablePlanFields(req.body);
 
     if (updates.product && !['clarity', 'codea'].includes(updates.product)) {
       return res.status(400).json({
@@ -184,10 +234,8 @@ router.patch('/:planId', async (req: Request, res: Response) => {
       });
     }
 
-    if (updates.modelIds && Array.isArray(updates.modelIds) && updates.modelIds.length > 0) {
-      const validModels = await ClarityModel.find({ modelId: { $in: updates.modelIds } }).select('modelId').lean();
-      const validIds = new Set(validModels.map((m: any) => m.modelId));
-      const invalid = updates.modelIds.filter((id: string) => !validIds.has(id));
+    if (Array.isArray(updates.modelIds) && updates.modelIds.length > 0) {
+      const invalid = await invalidModelIds(updates.modelIds);
       if (invalid.length > 0) {
         return res.status(400).json({
           success: false,
@@ -197,11 +245,7 @@ router.patch('/:planId', async (req: Request, res: Response) => {
       }
     }
 
-    const plan = await Plan.findOneAndUpdate(
-      { planId },
-      { $set: updates },
-      { returnDocument: 'after', runValidators: true }
-    );
+    const plan = await patchPlan(getDb(), planId, updates);
 
     if (!plan) {
       return res.status(404).json({
@@ -231,11 +275,11 @@ router.patch('/:planId', async (req: Request, res: Response) => {
  * DELETE /v1/plans/:planId
  * Delete plan
  */
-router.delete('/:planId', async (req: Request, res: Response) => {
+router.delete('/:planId', async (req: Request<{ planId: string }>, res: Response) => {
   try {
     const { planId } = req.params;
 
-    const plan = await Plan.findOneAndDelete({ planId });
+    const plan = await deletePlan(getDb(), planId);
 
     if (!plan) {
       return res.status(404).json({

@@ -6,7 +6,14 @@
  */
 
 import express, { Request, Response } from 'express';
-import { FallbackEvent } from '../models/fallback-event';
+import { getDb } from '../../../db/client.js';
+import {
+  failuresByModel,
+  mostFailedProviders,
+  recentFailures,
+  summary as fallbackSummary,
+  topFailureReasons,
+} from '../../../repositories/fallback-events.js';
 import { log } from '../../../lib/logger.js';
 
 const router = express.Router();
@@ -30,132 +37,29 @@ router.get('/', async (req: Request, res: Response) => {
     const hours = Math.min(Math.max(parseInt(req.query.hours as string) || 24, 1), 720); // 1h to 30d
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-    // Run all aggregation queries in parallel
+    const db = getDb();
+
+    // Five aggregates, each with its Mongo `$group` arbitrariness resolved at
+    // the query rather than here — see the repository. Every ordering there is
+    // total, because a `$limit` over a partial order silently changes which
+    // rows survive between two identical calls.
     const [
-      summaryResult,
-      topFailureReasons,
-      mostFailedProviders,
-      failuresByModel,
-      recentFailures,
+      summary,
+      reasons,
+      providers,
+      byModel,
+      failures,
     ] = await Promise.all([
-      // Summary stats
-      FallbackEvent.aggregate([
-        { $match: { timestamp: { $gte: since } } },
-        {
-          $group: {
-            _id: null,
-            totalEvents: { $sum: 1 },
-            successCount: { $sum: { $cond: ['$success', 1, 0] } },
-            failureCount: { $sum: { $cond: ['$success', 0, 1] } },
-            avgTotalLatencyMs: { $avg: '$totalLatencyMs' },
-            avgAttempts: { $avg: { $size: '$attempts' } },
-            maxAttempts: { $max: { $size: '$attempts' } },
-          },
-        },
-      ]),
-
-      // Top failure reasons (across all attempts)
-      FallbackEvent.aggregate([
-        { $match: { timestamp: { $gte: since } } },
-        { $unwind: '$attempts' },
-        {
-          $group: {
-            _id: '$attempts.reason',
-            count: { $sum: 1 },
-            avgLatencyMs: { $avg: '$attempts.latencyMs' },
-          },
-        },
-        { $sort: { count: -1 } },
-        { $limit: 10 },
-        {
-          $project: {
-            reason: '$_id',
-            count: 1,
-            avgLatencyMs: { $round: ['$avgLatencyMs', 0] },
-            _id: 0,
-          },
-        },
-      ]),
-
-      // Most failed providers
-      FallbackEvent.aggregate([
-        { $match: { timestamp: { $gte: since } } },
-        { $unwind: '$attempts' },
-        {
-          $group: {
-            _id: '$attempts.provider',
-            failureCount: { $sum: 1 },
-            models: { $addToSet: '$attempts.model' },
-            reasons: { $push: '$attempts.reason' },
-          },
-        },
-        { $sort: { failureCount: -1 } },
-        { $limit: 10 },
-        {
-          $project: {
-            provider: '$_id',
-            failureCount: 1,
-            modelCount: { $size: '$models' },
-            topReason: { $arrayElemAt: ['$reasons', 0] },
-            _id: 0,
-          },
-        },
-      ]),
-
-      // Failures by Clarity model
-      FallbackEvent.aggregate([
-        { $match: { timestamp: { $gte: since } } },
-        {
-          $group: {
-            _id: '$clarityModel',
-            totalEvents: { $sum: 1 },
-            failures: { $sum: { $cond: ['$success', 0, 1] } },
-            successes: { $sum: { $cond: ['$success', 1, 0] } },
-            avgAttempts: { $avg: { $size: '$attempts' } },
-          },
-        },
-        { $sort: { failures: -1 } },
-        { $limit: 20 },
-        {
-          $project: {
-            clarityModel: '$_id',
-            totalEvents: 1,
-            failures: 1,
-            successes: 1,
-            avgAttempts: { $round: ['$avgAttempts', 1] },
-            fallbackRate: {
-              $round: [
-                {
-                  $multiply: [
-                    { $divide: ['$failures', { $max: ['$totalEvents', 1] }] },
-                    100,
-                  ],
-                },
-                1,
-              ],
-            },
-            _id: 0,
-          },
-        },
-      ]),
-
-      // Recent failures (last 20)
-      FallbackEvent.find({ timestamp: { $gte: since }, success: false })
-        .sort({ timestamp: -1 })
-        .limit(20)
-        .lean(),
+      fallbackSummary(db, since),
+      topFailureReasons(db, since),
+      mostFailedProviders(db, since),
+      failuresByModel(db, since),
+      recentFailures(db, since),
     ]);
 
-    const summary = summaryResult[0] || {
-      totalEvents: 0,
-      successCount: 0,
-      failureCount: 0,
-      avgTotalLatencyMs: 0,
-      avgAttempts: 0,
-      maxAttempts: 0,
-    };
-
-    // Calculate fallback frequency
+    // Both operands are cast to `int` in the repository. Left as postgres.js
+    // hands them back — strings — this division would still produce a
+    // believable percentage, which is why the cast is there and not here.
     const fallbackRate =
       summary.totalEvents > 0
         ? Math.round((summary.failureCount / summary.totalEvents) * 1000) / 10
@@ -173,14 +77,30 @@ router.get('/', async (req: Request, res: Response) => {
           successCount: summary.successCount,
           failureCount: summary.failureCount,
           fallbackRate: `${fallbackRate}%`,
-          avgTotalLatencyMs: Math.round(summary.avgTotalLatencyMs || 0),
-          avgAttempts: Math.round((summary.avgAttempts || 0) * 10) / 10,
-          maxAttempts: summary.maxAttempts || 0,
+          // An aggregate over an empty set is one row of NULLs, where an empty
+          // Mongo `$group` produced NO document — the `summaryResult[0] || {…}`
+          // fallback the source needed is gone, and these coalesces replace it.
+          avgTotalLatencyMs: Math.round(summary.avgTotalLatencyMs ?? 0),
+          avgAttempts: Math.round((summary.avgAttempts ?? 0) * 10) / 10,
+          maxAttempts: summary.maxAttempts ?? 0,
         },
-        topFailureReasons,
-        mostFailedProviders,
-        failuresByModel,
-        recentFailures: recentFailures.map((e: any) => ({
+        // `$round: ['$avgLatencyMs', 0]` and `$round: ['$avgAttempts', 1]` were
+        // projection stages in the pipelines; they round here instead.
+        topFailureReasons: reasons.map((r) => ({
+          reason: r.reason,
+          count: r.count,
+          avgLatencyMs: Math.round(r.avgLatencyMs ?? 0),
+        })),
+        mostFailedProviders: providers,
+        failuresByModel: byModel.map((m) => ({
+          clarityModel: m.clarityModel,
+          totalEvents: m.totalEvents,
+          failures: m.failures,
+          successes: m.successes,
+          avgAttempts: Math.round((m.avgAttempts ?? 0) * 10) / 10,
+          fallbackRate: Math.round(m.fallbackRate * 10) / 10,
+        })),
+        recentFailures: failures.map((e) => ({
           timestamp: e.timestamp,
           clarityModel: e.clarityModel,
           attempts: e.attempts,

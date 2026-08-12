@@ -1,38 +1,18 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-// Mock mongoose before importing the module
-vi.mock('mongoose', () => {
-  const mockModel = {
-    findOne: vi.fn(),
-    find: vi.fn(),
-    create: vi.fn(),
-    findOneAndUpdate: vi.fn(),
-    updateOne: vi.fn(),
-  };
-
-  return {
-    default: {
-      Schema: vi.fn().mockImplementation(() => ({
-        index: vi.fn(),
-      })),
-      model: vi.fn(() => mockModel),
-      models: {},
-      connection: { readyState: 1 },
-    },
-  };
-});
-
-vi.mock('../db', () => ({
-  connectDB: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../../../lib/logger.js', () => ({
-  log: {
-    providers: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
-  },
-}));
-
-describe('provider-health', () => {
+/**
+ * NOTE: every case below asserts a hand-written COPY of the circuit-breaker
+ * logic, not `provider-health.ts` — the module is never imported here, so
+ * nothing in this file can fail because of a change to it.
+ *
+ * It previously carried `vi.mock` calls for `mongoose` and `../db`, which made
+ * it look like an integration test of the real module. Both are gone: the
+ * module no longer uses either, and `../db` no longer exists, so the mock would
+ * have failed to resolve. The real coverage for this behaviour is
+ * `repositories/__tests__/providerHealths.pgdb.test.ts`, which exercises the
+ * state machine against a real database.
+ */
+describe('provider-health (re-implementation, see file note)', () => {
   describe('circuit breaker configuration', () => {
     it('has sensible defaults', () => {
       // These values should match what's in provider-health.ts

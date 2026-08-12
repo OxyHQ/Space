@@ -74,7 +74,8 @@ export const BILLING_EXPIRY_TARGETS: readonly ExpirySweepTarget[] = [
  *
  * The repo-wide count is FOUR, re-measured against `master` at f7834e8 during
  * the rewiring: `models/api-key-usage.ts:91` (billing's, above),
- * `internal/providers/models/fallback-event.ts:46` and `lib/auth-health.ts:53`
+ * `internal/providers/models/fallback-event.ts:46` (that file is DELETED as of
+ * the providers rewiring — read it at f7834e8) and `lib/auth-health.ts:53`
  * (both here), and `models/notification.ts:84` — 90 days and PARTIAL on
  * `status: 'dismissed'`, a predicate `ExpirySweepTarget` cannot express, which
  * is why the collab domain registers it through a generated column instead.
@@ -87,8 +88,9 @@ export const BILLING_EXPIRY_TARGETS: readonly ExpirySweepTarget[] = [
  * corrected rather than deleted because the count is the thing a future reader
  * would check this comment for.
  *
- * `internal/providers/models/api-usage.ts` is deliberately ABSENT: it declares
- * no TTL at all. It is easy to mistake for the billing domain's
+ * `internal/providers/models/api-usage.ts` is deliberately ABSENT: it declared
+ * no TTL at all (that file is DELETED as of the providers rewiring — read it at
+ * f7834e8). It is easy to mistake for the billing domain's
  * `api_key_usage`, which does have one, and giving it a 90-day retention on
  * that resemblance would start deleting rows nobody agreed to delete. The
  * consequence is real and is

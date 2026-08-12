@@ -4,11 +4,36 @@
  */
 
 import express, { Request, Response } from 'express';
-import { CreditPackage } from '../models/credit-package.js';
+import { getDb } from '../../../db/client.js';
+import {
+  createPackage,
+  deletePackage,
+  findBySlug,
+  listPackages,
+  patchPackage,
+} from '../../../repositories/credit-packages.js';
 import { broadcastCreditPackagesUpdate } from '../lib/broadcast-helpers.js';
 import { log } from '../../../lib/logger.js';
 
 const router = express.Router();
+
+/**
+ * The columns a client may set. See the note in `routes/features.ts` — the
+ * source spread `...rest` and `{ ...req.body }`, which against a table is mass
+ * assignment. `packageId` is the key and is never patched.
+ */
+function writablePackageFields(body: Record<string, unknown>) {
+  return {
+    name: body.name as string | undefined,
+    credits: body.credits as number | undefined,
+    price: body.price as number | undefined,
+    currency: body.currency as string | undefined,
+    stripePriceId: body.stripePriceId as string | null | undefined,
+    sortOrder: body.sortOrder as number | undefined,
+    isActive: body.isActive as boolean | undefined,
+    description: body.description as string | null | undefined,
+  };
+}
 
 /**
  * GET /v1/credit-packages
@@ -18,10 +43,9 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { active } = req.query;
 
-    const query: any = {};
-    if (active !== undefined) query.isActive = active === 'true';
-
-    const packages = await CreditPackage.find(query).sort({ sortOrder: 1 }).lean();
+    const packages = await listPackages(getDb(), {
+      isActive: active !== undefined ? active === 'true' : undefined,
+    });
 
     res.json({
       success: true,
@@ -42,10 +66,10 @@ router.get('/', async (req: Request, res: Response) => {
  * GET /v1/credit-packages/:packageId
  * Get specific credit package
  */
-router.get('/:packageId', async (req: Request, res: Response) => {
+router.get('/:packageId', async (req: Request<{ packageId: string }>, res: Response) => {
   try {
     const { packageId } = req.params;
-    const pkg = await CreditPackage.findOne({ packageId }).lean();
+    const pkg = await findBySlug(getDb(), packageId);
 
     if (!pkg) {
       return res.status(404).json({
@@ -75,7 +99,7 @@ router.get('/:packageId', async (req: Request, res: Response) => {
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { packageId, name, credits, price, currency, ...rest } = req.body;
+    const { packageId, name, credits, price, currency } = req.body;
 
     if (!packageId || !name) {
       return res.status(400).json({
@@ -101,7 +125,8 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await CreditPackage.findOne({ packageId: packageId.toLowerCase() });
+    const db = getDb();
+    const existing = await findBySlug(db, packageId.toLowerCase());
     if (existing) {
       return res.status(409).json({
         success: false,
@@ -110,13 +135,13 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    const pkg = await CreditPackage.create({
+    const pkg = await createPackage(db, {
+      ...writablePackageFields(req.body),
       packageId: packageId.toLowerCase(),
       name,
       credits,
       price,
       currency: currency || 'usd',
-      ...rest,
     });
 
     res.status(201).json({
@@ -139,13 +164,12 @@ router.post('/', async (req: Request, res: Response) => {
  * PATCH /v1/credit-packages/:packageId
  * Update credit package
  */
-router.patch('/:packageId', async (req: Request, res: Response) => {
+router.patch('/:packageId', async (req: Request<{ packageId: string }>, res: Response) => {
   try {
     const { packageId } = req.params;
-    const updates = { ...req.body };
-
-    // Don't allow changing packageId
-    delete updates.packageId;
+    // `packageId` is absent from the whitelist, which is what the source's
+    // `delete updates.packageId` achieved.
+    const updates = writablePackageFields(req.body);
 
     if (typeof updates.credits === 'number' && updates.credits < 1) {
       return res.status(400).json({
@@ -163,11 +187,7 @@ router.patch('/:packageId', async (req: Request, res: Response) => {
       });
     }
 
-    const pkg = await CreditPackage.findOneAndUpdate(
-      { packageId },
-      { $set: updates },
-      { returnDocument: 'after', runValidators: true }
-    );
+    const pkg = await patchPackage(getDb(), packageId, updates);
 
     if (!pkg) {
       return res.status(404).json({
@@ -197,11 +217,11 @@ router.patch('/:packageId', async (req: Request, res: Response) => {
  * DELETE /v1/credit-packages/:packageId
  * Delete credit package
  */
-router.delete('/:packageId', async (req: Request, res: Response) => {
+router.delete('/:packageId', async (req: Request<{ packageId: string }>, res: Response) => {
   try {
     const { packageId } = req.params;
 
-    const pkg = await CreditPackage.findOneAndDelete({ packageId });
+    const pkg = await deletePackage(getDb(), packageId);
 
     if (!pkg) {
       return res.status(404).json({
