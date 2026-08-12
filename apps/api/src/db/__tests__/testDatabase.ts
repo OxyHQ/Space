@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { generateDrizzleJson, generateMigration } from 'drizzle-kit/api';
 import { createDatabase, DATABASE_CASING, type OxyDatabase } from '@oxyhq/db';
 import type postgres from 'postgres';
@@ -159,16 +159,36 @@ export async function closeTestDb(): Promise<void> {
 }
 
 /**
+ * A prefix no other test file can produce, for every id and every user id a
+ * file writes.
+ *
+ * Every `*.pgdb.test.ts` in this package shares ONE database, so an assertion
+ * that aggregates over a whole table passes alone and fails beside a sibling —
+ * and the pre-existing assertion is usually the bug the new file merely
+ * reveals. Scoping to owned ids at the point of writing is what stops that.
+ *
+ * Tables that hang off a foreign key can scope through {@link seedWorkspace}
+ * instead; this is for the ones that do not, where there is no parent row to
+ * make ownership structural.
+ */
+export function testScope(label: string): string {
+  return `${label}-${randomBytes(8).toString('hex')}`;
+}
+
+/**
  * A workspace row for a test file to hang its own rows off, so every
  * aggregate can be scoped to ids the file owns.
  *
  * `databases.workspaceId` is a real foreign key, so this is not optional
- * bookkeeping — it is the only way to insert a database at all.
+ * bookkeeping — it is the only way to insert a database at all. The name and
+ * owner go through {@link testScope} so that two files passing the same label
+ * still cannot collide on an assertion that aggregates over `ownerId`.
  */
 export async function seedWorkspace(db: TestDatabase, label: string): Promise<string> {
+  const scope = testScope(label);
   const [row] = await db
     .insert(schema.workspaces)
-    .values({ name: label, ownerId: `owner-${label}` })
+    .values({ name: scope, ownerId: `owner-${scope}` })
     .returning({ id: schema.workspaces.id });
   return row.id;
 }
