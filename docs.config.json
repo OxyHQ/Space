@@ -1,11 +1,11 @@
 {
-  "package": "oxyspace",
-  "displayName": "Oxy Space",
-  "shortName": "oxyspace",
-  "repo": "https://github.com/OxyHQ/Clarity",
+  "package": "oxystation",
+  "displayName": "Oxy Station",
+  "shortName": "oxystation",
+  "repo": "https://github.com/OxyHQ/Station",
   "category": "app",
   "versions": ["master"],
   "defaultVersion": "master",
   "docsPath": "docs/",
-  "description": "Oxy Space — your workspace for docs, databases, and AI."
+  "description": "Oxy Station — your workspace for docs, databases, and AI."
 }

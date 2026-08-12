@@ -1,10 +1,10 @@
-# Oxy Space Developer Onboarding
+# Oxy Station Developer Onboarding
 
 Last updated: 2026-05-25
 
-Welcome to Oxy Space — the workspace for docs, databases, and AI. This guide gets you productive on day 1.
+Welcome to Oxy Station — the workspace for docs, databases, and AI. This guide gets you productive on day 1.
 
-> The codebase is mid-pivot from a legacy AI chat product to a Notion-like workspace. Many backend modules (chat runtime, internal AI provider routing) remain in place but are not exposed in the Oxy Space UI. The roadmap delivers pages, blocks, databases, and real-time collab in upcoming phases.
+> The codebase is mid-pivot from a legacy AI chat product to a Notion-like workspace. Many backend modules (chat runtime, internal AI provider routing) remain in place but are not exposed in the Oxy Station UI. The roadmap delivers pages, blocks, databases, and real-time collab in upcoming phases.
 
 ## Monorepo
 
@@ -97,7 +97,7 @@ Use for data fetched from the API that needs caching, refetching, and stale mana
 ### Running tests
 
 ```bash
-bun test --filter @oxyspace/api      # Run all API tests
+bun test --filter @oxystation/api      # Run all API tests
 bun run lint                         # Lint the API
 ```
 
@@ -108,13 +108,13 @@ bun install                       # Install all workspace dependencies
 bun run dev                       # Start all apps in dev mode
 bun run dev:api                   # API only (Express + hot reload)
 bun run dev:app                   # Expo app only (web + tunnel)
-bun test --filter @oxyspace/api   # API tests (vitest)
+bun test --filter @oxystation/api   # API tests (vitest)
 bun run lint                      # Lint API code
 bunx sst dev                      # Start SST dev multiplexer
 bunx sst deploy --stage dev       # Deploy to a stage
 ```
 
-Environment: copy `apps/api/example.env` to `apps/api/.env` and fill in your MongoDB URI, Redis URL, and provider secrets. The database name is computed automatically as `oxyspace-{NODE_ENV}` — do not embed it in the URI.
+Environment: copy `apps/api/example.env` to `apps/api/.env` and fill in your MongoDB URI, Redis URL, and provider secrets. The database name is computed automatically as `oxystation-{NODE_ENV}` — do not embed it in the URI.
 
 ## Links to Deep Docs
 

@@ -91,9 +91,9 @@ app.use('/v1', (_req, res, next) => {
 
 // Internal routes - restricted to known origins
 const PRODUCTION_ORIGINS = [
-  'https://space.oxy.so',
-  'https://console.space.oxy.so',
-  'https://gateway.space.oxy.so',
+  'https://station.oxy.so',
+  'https://console.station.oxy.so',
+  'https://gateway.station.oxy.so',
 ];
 
 const DEV_ORIGINS = [
@@ -186,7 +186,7 @@ app.use('/internal', internalRouter);
 // Root route
 app.get('/', (_req, res) => {
   res.json({
-    message: 'Oxy Space API',
+    message: 'Oxy Station API',
     version: '1.0.0',
     endpoints: [
       '/health',

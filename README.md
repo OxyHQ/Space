@@ -1,10 +1,10 @@
 <p align="center">
-  <b>Oxy Space</b> is a workspace for documents and databases by <a href="https://oxy.so">Oxy</a>.<br>
+  <b>Oxy Station</b> is a workspace for documents and databases by <a href="https://oxy.so">Oxy</a>.<br>
   Pages made of blocks, typed databases with views, comments and sharing, on every platform.
 </p>
 
 <p align="center">
-  <a href="https://space.oxy.so">space.oxy.so</a>
+  <a href="https://station.oxy.so">station.oxy.so</a>
 </p>
 
 <p align="center">
@@ -33,9 +33,9 @@ Workspaces hold members, settings and permissions. Comments, share links and a t
 
 ### 🔑 Identity comes from Oxy
 
-There is no Space account. Sign in is the device first Oxy session, handled end to end by [`@oxyhq/services`](https://www.npmjs.com/package/@oxyhq/services) on the client and [`@oxyhq/core`](https://www.npmjs.com/package/@oxyhq/core) on the server.
+There is no Station account. Sign in is the device first Oxy session, handled end to end by [`@oxyhq/services`](https://www.npmjs.com/package/@oxyhq/services) on the client and [`@oxyhq/core`](https://www.npmjs.com/package/@oxyhq/core) on the server.
 
-On top of that, Space carries its own authorize screen: a registered developer app can ask a signed in person for access over a PKCE flow. See the [Oxy platform repo](https://github.com/OxyHQ/oxy).
+On top of that, Station carries its own authorize screen: a registered developer app can ask a signed in person for access over a PKCE flow. See the [Oxy platform repo](https://github.com/OxyHQ/oxy).
 
 </td>
 </tr>
@@ -45,8 +45,8 @@ On top of that, Space carries its own authorize screen: a registered developer a
 
 | Workspace | Path | What it is |
 |---|---|---|
-| `@oxyspace/app` | [`apps/app/`](apps/app/) | Expo client for web, iOS and Android: editor, database views, command palette, sharing |
-| `@oxyspace/api` | [`apps/api/`](apps/api/) | Express API: TypeScript, MongoDB via Mongoose, Socket.IO |
+| `@oxystation/app` | [`apps/app/`](apps/app/) | Expo client for web, iOS and Android: editor, database views, command palette, sharing |
+| `@oxystation/api` | [`apps/api/`](apps/api/) | Express API: TypeScript, MongoDB via Mongoose, Socket.IO |
 
 The client is expo-router with NativeWind and Reanimated, rendering [`@oxyhq/bloom`](https://www.npmjs.com/package/@oxyhq/bloom) primitives, with Zustand for state, TanStack Query for data, and shared API schemas from [`@oxyhq/contracts`](https://www.npmjs.com/package/@oxyhq/contracts).
 
@@ -75,7 +75,7 @@ bun run build:app   # Expo web export
 bun run build:api   # API bundle
 bun run lint        # both workspaces
 
-bun run --filter @oxyspace/api test   # Vitest
+bun run --filter @oxystation/api test   # Vitest
 ```
 
 `bun run android`, `bun run ios` and `bun run web` target the client.

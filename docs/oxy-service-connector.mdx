@@ -6,7 +6,7 @@ order: 3
 
 # Oxy service connector
 
-> This describes a manifest-driven integration protocol carried over from the legacy Clarity AI chat product. It is internal-only for Oxy Space today (Phase 5 / Hub AI scope).
+> This describes a manifest-driven integration protocol carried over from the legacy Clarity AI chat product. It is internal-only for Oxy Station today (Phase 5 / Hub AI scope).
 
 The backend integrates with the rest of the Oxy ecosystem — and with future third-party services — through a **manifest-driven protocol**. A service registers an `OxyService` document declaring its tools, events, and optional context endpoint. The internal runtime auto-discovers the manifest at chat time, generates AI-SDK `tool()` wrappers with Zod schemas, and forwards the user's OxyHQ JWT to the service API.
 
@@ -21,7 +21,7 @@ The backend integrates with the rest of the Oxy ecosystem — and with future th
 
 ## Manifest shape
 
-`OxyService` documents follow the schema in [`apps/api/src/models/oxy-service.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/models/oxy-service.ts):
+`OxyService` documents follow the schema in [`apps/api/src/models/oxy-service.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/models/oxy-service.ts):
 
 ```ts
 {
@@ -59,7 +59,7 @@ Tool names exposed to the model are namespaced: `oxy_{serviceId}__{toolName}`. F
 
 ## Chat-time integration
 
-At chat start, [`apps/api/src/routes/v1/chat-completions.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/routes/v1/chat-completions.ts) calls `buildOxyServiceTools()` to merge service tools into the model's toolset:
+At chat start, [`apps/api/src/routes/v1/chat-completions.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/routes/v1/chat-completions.ts) calls `buildOxyServiceTools()` to merge service tools into the model's toolset:
 
 ```ts
 import { buildOxyServiceTools } from '@/lib/tools/oxy-services';
@@ -154,7 +154,7 @@ To remove a service, delete (or set `enabled: false` on) the manifest. Running c
 
 When extending this system:
 
-- Use the same `safeExecute()` + per-user cache pattern as [`integrations.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/lib/tools/integrations.ts) and [`mcp.ts`](https://github.com/OxyHQ/Clarity/blob/main/apps/api/src/lib/tools/mcp.ts).
+- Use the same `safeExecute()` + per-user cache pattern as [`integrations.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/lib/tools/integrations.ts) and [`mcp.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/lib/tools/mcp.ts).
 - Use `jsonSchemaToZod()` from `mcp-schema.ts` for runtime schema conversion — keep the manifest format JSON Schema for transport.
 - Forward `req.accessToken` (the user's OxyHQ JWT) for first-party services. Do **not** invent a new auth mechanism.
 - Namespace tool ids as `oxy_{serviceId}__{toolName}` everywhere — it's load-bearing for tool-call attribution.

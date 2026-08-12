@@ -70,7 +70,7 @@ async function fetchWithTimeout(url: string): Promise<{ body: string; finalUrl: 
       signal: controller.signal,
       headers: {
         'user-agent':
-          'Mozilla/5.0 (compatible; OxySpaceBot/1.0; +https://space.oxy.so/bot)',
+          'Mozilla/5.0 (compatible; OxyStationBot/1.0; +https://station.oxy.so/bot)',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     });

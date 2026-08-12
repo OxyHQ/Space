@@ -642,7 +642,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
           thinkingMatch.forEach(match => {
             const content = match.replace(/<\/?thinking>/g, '').trim();
             if (content) {
-              res.write(`event: oxyspace.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content })}\n\n`);
+              res.write(`event: oxystation.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content })}\n\n`);
               log.v1.debug({ reasoning: content.slice(0, 100) }, 'Reasoning chunk (thinking tag)');
             }
           });
@@ -660,7 +660,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         // Handle Gemini thought summaries and other reasoning tokens
         const reasoningText = (chunk as ExtendedChunk).text || (chunk as ExtendedChunk).thoughtDelta || (chunk as ExtendedChunk).reasoningDelta;
         if (reasoningText && typeof reasoningText === 'string' && reasoningText.trim()) {
-          res.write(`event: oxyspace.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content: reasoningText.trim() })}\n\n`);
+          res.write(`event: oxystation.reasoning\ndata: ${JSON.stringify({ eventVersion: 1, content: reasoningText.trim() })}\n\n`);
           log.v1.debug({ reasoning: reasoningText.slice(0, 100) }, 'Reasoning chunk (provider)');
         }
       } else if (chunk.type === 'tool-call') {
@@ -712,7 +712,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         }
 
         // Stream tool result as named SSE event (non-standard, Clarity extension)
-        res.write(`event: oxyspace.tool_result\ndata: ${JSON.stringify({
+        res.write(`event: oxystation.tool_result\ndata: ${JSON.stringify({
           eventVersion: 1,
           tool_call_id: chunk.toolCallId,
           name: originalToolName,
@@ -736,7 +736,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         // Emit agent message as named SSE event (non-standard, Clarity extension)
         if (originalToolName === 'delegateToAgent' && chunk.output && !chunk.output.error) {
           const ar = chunk.output;
-          res.write(`event: oxyspace.agent\ndata: ${JSON.stringify({
+          res.write(`event: oxystation.agent\ndata: ${JSON.stringify({
             eventVersion: 1,
             agentId: ar.agentId,
             agentName: ar.agentName,
@@ -881,7 +881,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       try {
         const toolOutput = await (toolFn.execute as Function)(args);
 
-        res.write(`event: oxyspace.tool_result\ndata: ${JSON.stringify({
+        res.write(`event: oxystation.tool_result\ndata: ${JSON.stringify({
           eventVersion: 1,
           tool_call_id: toolCallId,
           name: toolName,
@@ -966,7 +966,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       try {
         const title = await titlePromise;
         if (title) {
-          res.write(`event: oxyspace.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
+          res.write(`event: oxystation.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
           await Conversation.updateOne(
             { oxyUserId: req.user.id, conversationId },
             { $set: { title } },

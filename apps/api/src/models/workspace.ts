@@ -1,7 +1,7 @@
 import mongoose, { Schema, Model, Document, HydratedDocument } from 'mongoose';
 
 /**
- * Workspace — top-level container for Oxy Space pages, blocks, databases.
+ * Workspace — top-level container for Oxy Station pages, blocks, databases.
  *
  * Every user gets exactly one personal workspace on first authenticated
  * access (created by `ensurePersonalWorkspace` middleware). Additional

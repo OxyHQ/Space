@@ -194,13 +194,13 @@ export function SecuritySection() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `oxyspace-audit-${new Date().toISOString().split("T")[0]}.${exportFormat}`;
+        a.download = `oxystation-audit-${new Date().toISOString().split("T")[0]}.${exportFormat}`;
         a.click();
         URL.revokeObjectURL(url);
       } else {
         await Share.share({
           message: content,
-          title: `Oxy Space Audit Export (${exportFormat.toUpperCase()})`,
+          title: `Oxy Station Audit Export (${exportFormat.toUpperCase()})`,
         });
       }
 

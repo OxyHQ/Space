@@ -1,16 +1,16 @@
 {
   "expo": {
     "owner": "oxyhq",
-    "name": "Oxy Space",
-    "slug": "oxyspace",
+    "name": "Oxy Station",
+    "slug": "oxystation",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon-512.png",
-    "scheme": "oxyspace",
+    "scheme": "oxystation",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "so.oxy.space",
+      "bundleIdentifier": "so.oxy.station",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -25,7 +25,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "googleServicesFile": "./google-services.json",
-      "package": "so.oxy.space",
+      "package": "so.oxy.station",
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",

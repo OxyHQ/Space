@@ -53,7 +53,7 @@ export default function HomePage() {
     <View className="flex-1 items-center justify-center bg-background px-6">
       <View className="max-w-md items-center gap-4">
         <Text className="text-3xl font-semibold text-foreground text-center">
-          Oxy Space
+          Oxy Station
         </Text>
 
         {!isAuthenticated ? (

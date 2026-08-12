@@ -2,7 +2,7 @@
 
 Last updated: 2026-03-07
 
-> Carry-over from the legacy Clarity AI chat product. Not exposed in the Oxy Space user surface.
+> Carry-over from the legacy Clarity AI chat product. Not exposed in the Oxy Station user surface.
 
 The legacy proactive-intelligence system is built on `triggers` + autonomy runtime + policy controls.
 

@@ -1,7 +1,7 @@
 {
-  "name": "@oxyspace/api",
+  "name": "@oxystation/api",
   "version": "1.0.0",
-  "description": "Oxy Space API - Express backend for the Oxy Space workspace",
+  "description": "Oxy Station API - Express backend for the Oxy Station workspace",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

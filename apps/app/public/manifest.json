@@ -1,6 +1,6 @@
 {
-  "name": "Oxy Space — Workspace for docs, databases, and AI",
-  "short_name": "Oxy Space",
+  "name": "Oxy Station — Workspace for docs, databases, and AI",
+  "short_name": "Oxy Station",
   "description": "Your workspace for docs, databases, and AI.",
   "start_url": "/",
   "display": "standalone",

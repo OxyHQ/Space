@@ -9,8 +9,8 @@ import { Platform } from 'react-native';
 
 // Default API URLs for different environments
 export const DEV_API_BASE_URL = 'http://localhost:4001';
-export const STAGING_API_BASE_URL = 'https://staging-api.space.oxy.so';
-export const PROD_API_BASE_URL = 'https://api.space.oxy.so';
+export const STAGING_API_BASE_URL = 'https://staging-api.station.oxy.so';
+export const PROD_API_BASE_URL = 'https://api.station.oxy.so';
 
 const ENV = {
   dev: {
