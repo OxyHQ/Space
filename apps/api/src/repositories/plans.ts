@@ -29,11 +29,18 @@ function matchesSlug(value: string) {
  */
 export async function listPlans(
   db: PgHandle,
-  filter: { product?: string; isActive?: boolean } = {},
+  filter: { product?: string; isActive?: boolean; planId?: string; isFree?: boolean } = {},
 ): Promise<PlanRow[]> {
+  // Every predicate is applied in the WHERE clause, not by the caller. The
+  // Mongo callers passed `{ planId, isActive: true, isFree: false }` and took
+  // `[0]`, so narrowing this to `findBySlug` would have returned an inactive
+  // plan where the source returned none — a behaviour change disguised as a
+  // simplification.
   const conditions = [];
   if (filter.product !== undefined) conditions.push(eq(plans.product, filter.product));
   if (filter.isActive !== undefined) conditions.push(eq(plans.isActive, filter.isActive));
+  if (filter.planId !== undefined) conditions.push(matchesSlug(filter.planId));
+  if (filter.isFree !== undefined) conditions.push(eq(plans.isFree, filter.isFree));
 
   return db
     .select()

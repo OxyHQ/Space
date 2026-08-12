@@ -15,6 +15,13 @@
       "when": 1786538104197,
       "tag": "0001_lovely_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786555272674,
+      "tag": "0002_green_the_leader",
+      "breakpoints": true
     }
   ]
 }

@@ -1,49 +1,14 @@
 import { registerHook } from '../hook-runner.js';
-import mongoose, { Schema, Model, Document } from 'mongoose';
+import { getDb } from '../../../db/client.js';
+import { recordChatAnalytics } from '../../../repositories/chatAnalytics.js';
 import { log } from '../../logger.js';
-
-interface IChatAnalyticsFields {
-  oxyUserId: mongoose.Types.ObjectId;
-  conversationId?: string;
-  model: string;
-  clarityModelId?: string;
-  provider: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  latencyMs: number;
-  platform: string;
-  skillId?: string;
-  createdAt: Date;
-}
-
-type IChatAnalytics = IChatAnalyticsFields & Omit<Document, 'model'>;
-
-const ChatAnalyticsSchema = new Schema<IChatAnalytics>({
-  oxyUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  conversationId: String,
-  model: { type: String, required: true },
-  clarityModelId: String,
-  provider: { type: String, required: true },
-  promptTokens: { type: Number, default: 0 },
-  completionTokens: { type: Number, default: 0 },
-  totalTokens: { type: Number, default: 0 },
-  latencyMs: { type: Number, default: 0 },
-  platform: { type: String, default: 'app' },
-  skillId: String,
-}, { timestamps: true });
-
-// Index for time-based analytics queries
-ChatAnalyticsSchema.index({ oxyUserId: 1, createdAt: -1 });
-
-export const ChatAnalytics: Model<IChatAnalytics> = mongoose.models.ChatAnalytics || mongoose.model<IChatAnalytics>('ChatAnalytics', ChatAnalyticsSchema);
 
 registerHook({
   name: 'analytics',
   afterChat: async (ctx) => {
     if (!ctx.userId) return;
     try {
-      await ChatAnalytics.create({
+      await recordChatAnalytics(getDb(), {
         oxyUserId: ctx.userId,
         conversationId: ctx.conversationId,
         model: ctx.modelUsed,
