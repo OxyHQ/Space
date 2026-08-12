@@ -10,26 +10,17 @@
  * A table that is not reachable from this file does not exist as far as
  * drizzle-kit is concerned: it will not appear in a generated migration and
  * its absence produces no error. `db:generate` is therefore always paired with
- * the table-count assertion in `src/db/__tests__/schema-census.test.ts` —
- * `drizzle-kit generate` exits 0 and leaves `drizzle/` byte-identical both when
- * there is genuinely nothing to do AND when the schema failed to load
- * entirely, and only the count tells those apart.
+ * a table-count assertion — `drizzle-kit generate` exits 0 and leaves
+ * `src/drizzle/` byte-identical both when there is genuinely nothing to do AND
+ * when the schema failed to load entirely, and only the count tells those
+ * apart. `src/db/__tests__/testDatabase.ts` carries the same floor for the
+ * test renderer.
  */
 
-export * from './collab.js';
 export * from './workspaces.js';
-export * from './databases.js';
-
-export * from './collab.js';
-export * from './databases.js';
 export * from './pages.js';
-export * from './workspaces.js';
+export * from './databases.js';
+export * from './collab.js';
 export * from './billing.js';
-
 export * from './aiChat.js';
-export * from './billing.js';
-export * from './collab.js';
-export * from './databases.js';
-export * from './pages.js';
-export * from './workspaces.js';
 export * from './providers.js';
