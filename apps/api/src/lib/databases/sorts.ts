@@ -1,8 +1,8 @@
 import type {
   DatabaseProperty,
   DatabasePropertyType,
-} from '../../models/database.js';
-import type { ViewSort } from '../../models/database-view.js';
+  ViewSort,
+} from '../../db/schema/databases.js';
 import { readPropertyValue } from './filters.js';
 
 /**

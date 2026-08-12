@@ -1,10 +1,8 @@
-import mongoose from 'mongoose';
-import { Page } from '../../models/page.js';
-import type {
-  DatabaseProperty,
-  DatabaseSchema,
-} from '../../models/database.js';
-import { Database } from '../../models/database.js';
+import type { PgHandle } from '../../db/client.js';
+import type { DatabaseProperty } from '../../db/schema/databases.js';
+import type { PageProperties } from '../../db/schema/pages.js';
+import { findDatabaseById } from '../../repositories/databases.js';
+import { findPagesByIds } from '../../repositories/pages.js';
 
 /**
  * Resolve a rollup property's value against a single source row.
@@ -17,17 +15,22 @@ import { Database } from '../../models/database.js';
  *
  * Returns `null` if the rollup can't be resolved (missing config, missing
  * target db, etc.) so the UI can render an em-dash placeholder.
+ *
+ * This module is NOT one of the pure `lib/databases/*` evaluators: it reads
+ * the related rows and their database, so it takes a handle like any
+ * repository caller.
  */
 export async function resolveRollup(
+  handle: PgHandle,
   rollupProperty: DatabaseProperty,
-  row: { properties: Map<string, unknown> | Record<string, unknown> | undefined },
+  row: { properties: PageProperties },
 ): Promise<number | string | null> {
   const config = rollupProperty.config;
   if (!config?.relationPropertyId || !config.function || !config.targetPropertyId) {
     return null;
   }
 
-  const relationValue = readValue(row.properties, config.relationPropertyId);
+  const relationValue = row.properties[config.relationPropertyId] ?? null;
   if (!relationValue || typeof relationValue !== 'object') return null;
   const pageIds = (relationValue as { pageIds?: unknown }).pageIds;
   if (!Array.isArray(pageIds) || pageIds.length === 0) {
@@ -36,25 +39,29 @@ export async function resolveRollup(
 
   if (config.function === 'count') return pageIds.length;
 
-  const ids = pageIds
-    .filter((id): id is string => typeof id === 'string')
-    .filter((id) => /^[0-9a-fA-F]{24}$/u.test(id))
-    .map((id) => new mongoose.Types.ObjectId(id));
+  /**
+   * The 24-hex filter this used to apply is GONE, and its removal is the
+   * point rather than tidying.
+   *
+   * It existed to keep a malformed string out of `new ObjectId(...)`, which
+   * throws. There is no cast here — the ids are `text` — and a uuid v7 does
+   * not match `/^[0-9a-fA-F]{24}$/`, so keeping the filter would have emptied
+   * this list for every row created after the cutover and returned `null` for
+   * every numeric rollup. Silently, and looking exactly like a rollup whose
+   * targets happen to hold no numbers.
+   *
+   * An id that names nothing now costs one row fewer in the result instead of
+   * an exception, which is the answer the query gives for free.
+   */
+  const ids = pageIds.filter((id): id is string => typeof id === 'string');
   if (ids.length === 0) return null;
 
-  const relatedRows = await Page.find({
-    _id: { $in: ids },
-    archived: false,
-  })
-    .select('databaseId properties title createdAt updatedAt ownerId')
-    .lean();
+  const relatedRows = await findPagesByIds(handle, ids, { archived: false });
   if (relatedRows.length === 0) return null;
 
   const targetDbId = relatedRows[0]?.databaseId;
   if (!targetDbId) return null;
-  const targetDb = await Database.findById(targetDbId).lean<{
-    propertiesSchema: DatabaseSchema;
-  } | null>();
+  const targetDb = await findDatabaseById(handle, targetDbId);
   if (!targetDb) return null;
   const targetProp = targetDb.propertiesSchema.properties.find(
     (p) => p.id === config.targetPropertyId,
@@ -64,11 +71,7 @@ export async function resolveRollup(
   const numbers: number[] = [];
   const dates: number[] = [];
   for (const r of relatedRows) {
-    const props = r.properties as
-      | Map<string, unknown>
-      | Record<string, unknown>
-      | undefined;
-    const value = readValue(props, targetProp.id);
+    const value = r.properties[targetProp.id] ?? null;
     if (!value || typeof value !== 'object') continue;
     const obj = value as Record<string, unknown>;
     if (typeof obj.number === 'number' && Number.isFinite(obj.number)) {
@@ -98,13 +101,4 @@ export async function resolveRollup(
     default:
       return null;
   }
-}
-
-function readValue(
-  properties: Map<string, unknown> | Record<string, unknown> | undefined,
-  key: string,
-): unknown {
-  if (!properties) return null;
-  if (properties instanceof Map) return properties.get(key) ?? null;
-  return (properties as Record<string, unknown>)[key] ?? null;
 }

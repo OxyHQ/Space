@@ -15,7 +15,7 @@ import {
   serializeParsedValue,
 } from '../../lib/databases/property-values.js';
 import { evaluateFormulaExpression } from '../../lib/databases/formula.js';
-import type { DatabaseProperty } from '../../models/database.js';
+import type { DatabaseProperty } from '../../db/schema/databases.js';
 
 describe('parsePropertyValue', () => {
   it('parses text', () => {

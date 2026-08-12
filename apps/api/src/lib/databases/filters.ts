@@ -1,12 +1,10 @@
 import { z } from 'zod';
 import type {
-  Filter,
-  FilterGroup,
-} from '../../models/database-view.js';
-import type {
   DatabaseProperty,
   DatabasePropertyType,
-} from '../../models/database.js';
+  Filter,
+  FilterGroup,
+} from '../../db/schema/databases.js';
 
 /**
  * Operators valid per property type. Keeping the list explicit makes it

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import type {
   DatabaseProperty,
   DatabaseSchema,
-} from '../../models/database.js';
+} from '../../db/schema/databases.js';
 
 /**
  * Build the default property schema used when a Database is created without
