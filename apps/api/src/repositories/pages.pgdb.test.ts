@@ -12,8 +12,7 @@ import { eq, sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { isCheckViolation, isForeignKeyViolation, sqlColumnName, uuidv7 } from '@oxyhq/db';
 import { openPgdb, PGDB_ADMIN_URL, type Pgdb } from '../db/__tests__/pgdb-harness.js';
-import { pages } from '../db/schema/pages.js';
-import { blocks } from '../db/schema/pages.js';
+import { blocks, pages } from '../db/schema/pages.js';
 import { workspaces } from '../db/schema/workspaces.js';
 import {
   BREADCRUMB_MAX_DEPTH,
@@ -266,8 +265,9 @@ describe.skipIf(!PGDB_ADMIN_URL)('pages repository (real database)', () => {
         .insert(workspaces)
         .values({ name: 'other', ownerId: 'user-other' })
         .returning();
+      if (!otherWorkspace) throw new Error('fixture workspace was not created');
       const theirs = await createPage(pgdb.db, {
-        workspaceId: otherWorkspace?.id as string,
+        workspaceId: otherWorkspace.id,
         ownerId: 'user-other',
         order: 0,
       });
@@ -284,7 +284,7 @@ describe.skipIf(!PGDB_ADMIN_URL)('pages repository (real database)', () => {
       await deletePageTree(pgdb.db, mine.id);
       await deletePageTree(pgdb.db, archived.id);
       await deletePageTree(pgdb.db, theirs.id);
-      await pgdb.db.delete(workspaces).where(eq(workspaces.id, otherWorkspace?.id as string));
+      await pgdb.db.delete(workspaces).where(eq(workspaces.id, otherWorkspace.id));
     });
   });
 
@@ -316,8 +316,13 @@ describe.skipIf(!PGDB_ADMIN_URL)('pages repository (real database)', () => {
 
       const renamed = await updatePage(pgdb.db, page.id, { title: 'after', icon: undefined });
       expect(renamed?.title).toBe('after');
-      // The Mongo hazard, pinned: `$set: { icon: undefined }` was a no-op and
-      // the same statement in Postgres writes NULL. `undefined` must not erase.
+      // The Mongo hazard as a CONTRACT: `$set: { icon: undefined }` was a no-op
+      // and the same statement in Postgres writes NULL, so `undefined` must not
+      // erase. Measured caveat, so this is not read as more than it is: drizzle
+      // drops undefined values from `.set()` on its own, so this assertion
+      // holds with or without the repository's explicit guards. The guard is
+      // pinned instead by the empty-patch assertion below, which asserts the
+      // repository's OWN message.
       expect(renamed?.icon).toBe('star');
       expect(renamed?.cover).toBe('gradient');
 
@@ -460,12 +465,15 @@ describe.skipIf(!PGDB_ADMIN_URL)('pages repository (real database)', () => {
         created.push(page.id);
         parentId = page.id;
       }
-      const deepest = created[created.length - 1] as string;
+      const root = created.at(0);
+      const deepest = created.at(-1);
+      if (!root || !deepest) throw new Error('the deep chain fixture seeded nothing');
+
       const chain = await findPageAncestry(pgdb.db, deepest);
       expect(chain).toHaveLength(BREADCRUMB_MAX_DEPTH);
-      expect(chain[chain.length - 1]?.id).toBe(deepest);
+      expect(chain.at(-1)?.id).toBe(deepest);
 
-      await deletePageTree(pgdb.db, created[0] as string);
+      await deletePageTree(pgdb.db, root);
     });
 
     /**

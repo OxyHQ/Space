@@ -142,10 +142,14 @@ export interface UpdateBlockInput {
  * `PATCH /api/blocks/:id` — `routes/blocks.ts:526-563`.
  *
  * Defined keys only, and `undefined` is distinct from `null`: `parentBlockId`
- * is nullable and an explicit `null` un-nests the block. `content` is a
- * replacement rather than a merge, unlike `pages.properties` — the route runs
- * the incoming payload back through `normalizeContent` and persists the result
- * whole (`routes/blocks.ts:551-557`).
+ * is nullable and an explicit `null` un-nests the block. See
+ * `pagesRepository.updatePage` for what these guards do and do not buy —
+ * drizzle drops `undefined` from `.set()` on its own, so the observable part
+ * they pin is the all-undefined patch reaching the explicit error below.
+ *
+ * `content` is a replacement rather than a merge, unlike `pages.properties` —
+ * the route runs the incoming payload back through `normalizeContent` and
+ * persists the result whole (`routes/blocks.ts:551-557`).
  */
 export async function updateBlock(
   db: PgHandle,
@@ -193,8 +197,14 @@ export async function deleteBlockTree(db: PgHandle, rootId: string): Promise<num
     )
     select count(*)::int as deleted_count from deleted
   `);
-  const first = rows[0];
-  return typeof first?.deleted_count === 'number' ? first.deleted_count : 0;
+  // Loud rather than 0: `count(*)` without the `::int` decodes as a string, and
+  // a silent fallback would report "deleted nothing" for a statement that
+  // deleted a subtree.
+  const deleted = rows[0]?.deleted_count;
+  if (typeof deleted !== 'number') {
+    throw new Error(`deleteBlockTree read a non-numeric count: ${typeof deleted}`);
+  }
+  return deleted;
 }
 
 export interface ReorderResult {
@@ -300,14 +310,18 @@ export async function duplicateBlocksToPage(
   if (source.length === 0) return 0;
 
   const idMap = new Map(source.map((block) => [block.id, uuidv7()]));
-  const copies = source.map((block) => ({
-    id: idMap.get(block.id) as string,
-    pageId: targetPageId,
-    parentBlockId: block.parentBlockId ? (idMap.get(block.parentBlockId) ?? null) : null,
-    type: block.type,
-    content: block.content,
-    order: block.order,
-  }));
+  const copies = source.map((block) => {
+    const id = idMap.get(block.id);
+    if (id === undefined) throw new Error('duplicateBlocksToPage lost an id while rewiring');
+    return {
+      id,
+      pageId: targetPageId,
+      parentBlockId: block.parentBlockId ? (idMap.get(block.parentBlockId) ?? null) : null,
+      type: block.type,
+      content: block.content,
+      order: block.order,
+    };
+  });
 
   await db.insert(blocks).values(copies);
   return copies.length;

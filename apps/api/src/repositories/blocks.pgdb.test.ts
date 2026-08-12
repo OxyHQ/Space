@@ -113,9 +113,15 @@ describe.skipIf(!PGDB_ADMIN_URL)('blocks repository (real database)', () => {
       expect([...BLOCK_TYPES]).toEqual([...MODEL_BLOCK_TYPES]);
     });
 
+    // Raw SQL rather than a cast on the query builder: the value under test is
+    // one the TypeScript type deliberately cannot express, and reaching it
+    // through `as never` would be a hole in the same type this schema relies on.
     it('refuses a block type outside the list', async () => {
       await expect(
-        pgdb.db.insert(blocks).values({ pageId, type: 'not_a_block' as never, content: {}, order: 0 }),
+        pgdb.db.execute(sql`
+          insert into ${blocks} (id, page_id, type, content, "order")
+          values (${uuidv7()}, ${pageId}, 'not_a_block', '{}'::jsonb, 0)
+        `),
       ).rejects.toSatisfy(isCheckViolation);
     });
 
