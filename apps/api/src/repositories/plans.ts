@@ -101,6 +101,14 @@ export async function deletePlan(db: PgHandle, planId: string): Promise<PlanRow 
  * always returns a row: it is the only way to tell an inserted row from an
  * updated one in a single statement, and it is what `upsertedCount` meant.
  *
+ * A caller that supplies NO `modelIds` has nothing to re-sync, so that case
+ * stays `DO NOTHING`. The two branches are not two ways of doing one thing —
+ * they are the two things the argument means. Collapsing them is what breaks:
+ * `set: { modelIds: undefined }` is an empty SET clause and drizzle throws
+ * `No values to set`, and coalescing instead would write the column DEFAULT
+ * (`'{}'`) over a real list, because an omitted column in `excluded` takes its
+ * default rather than NULL.
+ *
  * Either way this removes the source's `isDuplicateKeyError` catch, which on
  * Postgres would be worse than useless: an exception cannot tell a duplicate
  * from a dropped connection, so a naive port would answer "already seeded" to
@@ -108,9 +116,16 @@ export async function deletePlan(db: PgHandle, planId: string): Promise<PlanRow 
  * propagates.
  */
 export async function seedPlan(db: PgHandle, values: NewPlan): Promise<boolean> {
-  const [row] = await db
-    .insert(plans)
-    .values({ ...values, planId: values.planId.toLowerCase() })
+  const insert = db.insert(plans).values({ ...values, planId: values.planId.toLowerCase() });
+
+  if (values.modelIds === undefined) {
+    const inserted = await insert
+      .onConflictDoNothing({ target: plans.planId })
+      .returning({ id: plans.id });
+    return inserted.length > 0;
+  }
+
+  const [row] = await insert
     .onConflictDoUpdate({
       target: plans.planId,
       set: { modelIds: values.modelIds },
