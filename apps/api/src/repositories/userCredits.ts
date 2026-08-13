@@ -18,10 +18,19 @@
  *
  * Empty result means REFUSED, never "something went wrong": a driver failure
  * still throws.
+ *
+ * Every `models/user-credits.ts` and `lib/user-credits-helpers.ts` citation
+ * below points at the PRE-PORT Mongoose source. Both files were deleted when
+ * the billing routes were rewired onto this repository; read them at `master`
+ * f7834e8 or earlier. They are cited rather than paraphrased because each one
+ * is the evidence for a semantic choice made here — the spend order, the refund
+ * bucket, the unguarded `$inc` — and a paraphrase is what lets one of those
+ * quietly change.
  */
 
 import { and, eq, gte, sql } from 'drizzle-orm';
 import type { StationDatabase } from '../db/client.js';
+import type { PgHandle } from './handle.js';
 import { userCredits } from '../db/schema/billing.js';
 
 /**
@@ -174,7 +183,7 @@ export async function refreshCreditsIfNeeded(
  * Returns null when the user has no row, matching `findByIdAndUpdate`'s null.
  */
 export async function addCredits(
-  db: StationDatabase,
+  db: PgHandle,
   userId: string,
   amount: number,
   type: 'free' | 'paid' = 'paid',

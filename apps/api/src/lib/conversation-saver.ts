@@ -5,10 +5,37 @@
  */
 
 import { generateText } from 'ai';
-import { Conversation, type ConversationSource } from '../models/conversation.js';
-import { Message } from '../models/message.js';
+import { getDb } from '../db/client.js';
+import {
+  findByConversationId,
+  updateTitle,
+  upsert as upsertConversation,
+} from '../repositories/conversations.js';
+import {
+  countForConversation,
+  replaceForConversation as replaceMessages,
+  type MessageInput,
+} from '../repositories/messages.js';
+import { MESSAGE_ROLES, type ConversationSource, type MessageRole } from '../db/schema/aiChat.js';
 import { resolveModel, getAIModel } from './chat-core.js';
 import { log } from './logger.js';
+
+/** One assembled message, before the stored-role filter narrows it. */
+interface AssembledMessage {
+  role: string;
+  content: MessageInput['content'];
+  toolInvocations?: MessageInput['toolInvocations'];
+  agentInfo?: MessageInput['agentInfo'];
+}
+
+/**
+ * `role` is `string` all the way from the request body — `ChatMessage.role` is
+ * declared `string` precisely because OpenAI-format bodies carry roles this
+ * schema does not store. This is the only place it becomes a `MessageRole`.
+ */
+function isStorableRole(msg: AssembledMessage): msg is AssembledMessage & { role: MessageRole } {
+  return (MESSAGE_ROLES as readonly string[]).includes(msg.role);
+}
 
 // Known translations of "TITLE" that LLMs may produce
 const TAG = String.raw`CLARITY_TITLE|TITLE|TÍTULO|TITRE|TITOLO|TITEL|ЗАГОЛОВОК`;
@@ -54,7 +81,7 @@ export interface SaveConversationParams {
 export async function saveConversation(params: SaveConversationParams): Promise<void> {
   const { userId, conversationId, messages, assistantResponse, toolInvocations, source, agentId, agentMessages } = params;
 
-  const allMessages = [
+  const allMessages: AssembledMessage[] = [
     ...messages.filter(m => m && m.role).map((m: any) => ({
       role: m.role,
       content: m.content,
@@ -73,42 +100,73 @@ export async function saveConversation(params: SaveConversationParams): Promise<
     },
   ].filter(msg => msg != null && msg.role && msg.content !== undefined);
 
-  const title = extractConversationTitle(assistantResponse, messages);
-
-  // Update conversation metadata
-  await Conversation.findOneAndUpdate(
-    { oxyUserId: userId, conversationId },
-    {
-      $set: {
-        lastMessage: stripTitleTags(assistantResponse).slice(0, 100),
-      },
-      $setOnInsert: {
-        oxyUserId: userId,
-        conversationId,
-        title,
-        source: source || 'app',
-        ...(agentId && { agentId }),
-      },
-    },
-    { upsert: true },
-  );
-
-  // Replace messages in separate collection
-  await Message.deleteMany({ conversationId, oxyUserId: userId });
-  if (allMessages.length > 0) {
-    await Message.insertMany(
-      allMessages.map(m => ({
-        conversationId,
-        oxyUserId: userId,
-        role: m.role,
-        content: m.content,
-        ...('toolInvocations' in m && m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
-        ...('agentInfo' in m && m.agentInfo ? { agentInfo: m.agentInfo } : {}),
-        createdAt: new Date(),
-      })),
-      { ordered: false },
+  /**
+   * Messages the `messages_role` CHECK will not accept are DROPPED, not raised.
+   *
+   * This is reachable on every request that used a tool: these messages come
+   * straight from an OpenAI-format request body, where a tool result carries
+   * `role: "tool"` — `lib/message-converter.ts` has a branch for exactly that —
+   * and the stored enum is only user/assistant/system.
+   *
+   * Dropping them is what Mongo did. `insertMany(..., { ordered: false })` ran
+   * the enum validator, skipped the offending documents, inserted the rest and
+   * then threw; the throw was swallowed by `saveConversationResult`, so the
+   * observable outcome was "the conversation is saved without its tool rows,
+   * and a line appears in the log".
+   *
+   * The repository's `insertMany` is all-or-nothing, so letting a `tool` row
+   * reach it would abort the transaction and lose the ENTIRE exchange — the
+   * user's message, the assistant's reply, everything — on any conversation
+   * that used a tool, silently, because the caller only logs. That is a
+   * regression the type system cannot see (`ChatMessage.role` is `string`) and
+   * no existing test covers, so the filter is the load-bearing line here and
+   * `conversationSaver.pgdb.test.ts` asserts it directly.
+   */
+  const storable = allMessages.filter(isStorableRole);
+  if (storable.length !== allMessages.length) {
+    log.chat.warn(
+      { conversationId, dropped: allMessages.length - storable.length },
+      'Dropped messages whose role is not stored',
     );
   }
+
+  const title = extractConversationTitle(assistantResponse, messages);
+
+  const rows: MessageInput[] = storable.map(m => ({
+    conversationId,
+    oxyUserId: userId,
+    role: m.role,
+    content: m.content,
+    ...(m.toolInvocations ? { toolInvocations: m.toolInvocations } : {}),
+    ...(m.agentInfo ? { agentInfo: m.agentInfo } : {}),
+    createdAt: new Date(),
+  }));
+
+  /**
+   * The metadata write and the message replacement share one transaction.
+   *
+   * They were two awaited round trips with a real gap between them: a crash or
+   * a statement timeout after the DELETE left the conversation with its new
+   * preview text and NO messages, permanently. `replaceForConversation` refuses
+   * to run outside a transaction so that gap cannot be reintroduced by a caller
+   * that simply forgets.
+   */
+  await getDb().transaction(async (tx) => {
+    await upsertConversation(
+      {
+        oxyUserId: userId,
+        conversationId,
+        set: { lastMessage: stripTitleTags(assistantResponse).slice(0, 100) },
+        setOnInsert: {
+          title,
+          source: source || 'app',
+          ...(agentId && { agentId }),
+        },
+      },
+      tx,
+    );
+    await replaceMessages({ conversationId, oxyUserId: userId }, rows, tx);
+  });
 }
 
 /**
@@ -153,17 +211,21 @@ export async function generateConversationTitle(
   userMessage: string,
 ): Promise<void> {
   try {
-    const conv = await Conversation.findOne({ oxyUserId: userId, conversationId });
+    const conv = await findByConversationId({ oxyUserId: userId, conversationId });
     if (!conv || conv.isManualTitle) return;
-    const messageCount = await Message.countDocuments({ conversationId });
+    // NOT scoped to the user, faithfully: the source `countDocuments` was not
+    // either, and this count only gates whether a title is worth generating.
+    // `count()` is mapped through `Number`, which matters: postgres.js decodes
+    // `count(*)` as a STRING while drizzle types it `number`, so an unmapped
+    // count would make this comparison `'10' > 3`, i.e. false.
+    const messageCount = await countForConversation(conversationId);
     if (messageCount > 3) return;
 
     const title = await generateTitle(userMessage);
     if (title) {
-      await Conversation.updateOne(
-        { oxyUserId: userId, conversationId },
-        { $set: { title } },
-      );
+      // `updateTitle` returns the number of rows MATCHED (Postgres reports only
+      // `rowCount`); nothing here reads it, and nothing did before.
+      await updateTitle({ oxyUserId: userId, conversationId }, title);
       log.chat.info({ conversationId, title }, 'Auto-generated conversation title');
     }
   } catch (err) {

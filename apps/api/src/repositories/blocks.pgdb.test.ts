@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { isCheckViolation, isForeignKeyViolation, sqlColumnName, uuidv7 } from '@oxyhq/db';
-import { BLOCK_TYPES as MODEL_BLOCK_TYPES } from '../models/block.js';
 import {
   closeTestDb,
   getTestDb,
@@ -100,18 +99,6 @@ describe('blocks repository (real database)', () => {
       expect(rows[0]?.def).toContain('ON DELETE CASCADE');
     });
 
-    /**
-     * A drift gate, not a tautology: `BLOCK_TYPES` is declared in the schema
-     * module so drizzle-kit never has to load mongoose, which means two lists
-     * exist for as long as the Mongoose model does. This assertion retires with
-     * `src/models/block.ts`; when that file goes, delete this test rather than
-     * relaxing it.
-     */
-    it('keeps the schema block-type list identical to the model it replaces', () => {
-      expect(BLOCK_TYPES.length).toBe(32);
-      expect(MODEL_BLOCK_TYPES.length).toBe(32);
-      expect([...BLOCK_TYPES]).toEqual([...MODEL_BLOCK_TYPES]);
-    });
 
     // Raw SQL rather than a cast on the query builder: the value under test is
     // one the TypeScript type deliberately cannot express, and reaching it

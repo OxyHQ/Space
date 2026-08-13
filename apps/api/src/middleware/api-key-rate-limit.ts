@@ -1,6 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import ApiKeyUsage from '../models/api-key-usage';
-import { Subscription } from '../models/subscription';
+import { getDb } from '../db/client.js';
+import {
+  countRequestsSince,
+  recordApiKeyUsage,
+  sumTokensSince,
+} from '../repositories/apiKeyUsage.js';
+import { findNewestLiveSubscription } from '../repositories/subscriptions.js';
 import { checkLimit } from '../lib/sliding-window-limiter.js';
 import { log } from '../lib/logger.js';
 
@@ -72,20 +77,28 @@ export const TIER_RATE_LIMITS: Record<string, IRateLimitConfig> = {
   },
 };
 
+/** The `authType` every read here filters on — session traffic, not internal. */
+const SESSION_AUTH_TYPE = 'session';
+
 /**
  * Get user's subscription tier
+ *
+ * The `createdAt desc` ordering is not decoration: a user with two live
+ * subscriptions gets the tier of the most recent one. `findNewestLiveSubscription`
+ * keeps it and adds an id tiebreak, because the uuid v7 primary key is not
+ * monotonic within a millisecond.
  */
 export async function getUserTier(userId: string): Promise<string> {
-  const subscription = await Subscription.findOne({
-    oxyUserId: userId,
-    status: { $in: ['active', 'trialing'] },
-  }).sort({ createdAt: -1 });
+  const subscription = await findNewestLiveSubscription(getDb(), userId);
 
   if (!subscription) {
     return 'free';
   }
 
-  const planName = subscription.plan?.name?.toLowerCase() || '';
+  // `plan.name` flattened to `planName`, and still nullable: the webhook upsert
+  // is a writer Mongoose validators never ran on, so a subscription with no plan
+  // name is a shape that exists today. `|| ''` was already the source's spelling.
+  const planName = subscription.planName?.toLowerCase() || '';
 
   if (planName.includes('enterprise')) return 'enterprise';
   if (planName.includes('ultra')) return 'business';
@@ -167,7 +180,7 @@ function sendRateLimitResponse(
         limitType: status.limitType,
         current: status.current,
         limit: status.limit,
-        ...(tier && { tier }),
+        ...(tier ? { tier } : {}),
       },
     },
   });
@@ -175,6 +188,11 @@ function sendRateLimitResponse(
 
 /**
  * Get current usage stats for a session-based user
+ *
+ * Every figure below comes back from `count()`/`sum()`, which postgres.js
+ * decodes as a STRING while drizzle types it `number`. The repository coerces at
+ * that boundary; without it, `tokensLastDay > limit` would compare `"9"` against
+ * `10` lexicographically and decide 9 is larger.
  */
 export async function getUserUsageStats(userId: string): Promise<{
   requestsLastMinute: number;
@@ -184,37 +202,25 @@ export async function getUserUsageStats(userId: string): Promise<{
   tier: string;
   limits: IRateLimitConfig;
 }> {
+  const db = getDb();
   const now = new Date();
   const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-  const [requestsLastMinute, requestsLastDay, tokensMinute, tokensDay, tier] = await Promise.all([
-    ApiKeyUsage.countDocuments({
-      oxyUserId: userId,
-      authType: 'session',
-      timestamp: { $gte: oneMinuteAgo },
-    }),
-    ApiKeyUsage.countDocuments({
-      oxyUserId: userId,
-      authType: 'session',
-      timestamp: { $gte: oneDayAgo },
-    }),
-    ApiKeyUsage.aggregate([
-      { $match: { oxyUserId: userId, authType: 'session', timestamp: { $gte: oneMinuteAgo } } },
-      { $group: { _id: null, total: { $sum: '$tokensUsed' } } },
-    ]),
-    ApiKeyUsage.aggregate([
-      { $match: { oxyUserId: userId, authType: 'session', timestamp: { $gte: oneDayAgo } } },
-      { $group: { _id: null, total: { $sum: '$tokensUsed' } } },
-    ]),
-    getUserTier(userId),
-  ]);
+  const [requestsLastMinute, requestsLastDay, tokensLastMinute, tokensLastDay, tier] =
+    await Promise.all([
+      countRequestsSince(db, userId, SESSION_AUTH_TYPE, oneMinuteAgo),
+      countRequestsSince(db, userId, SESSION_AUTH_TYPE, oneDayAgo),
+      sumTokensSince(db, userId, SESSION_AUTH_TYPE, oneMinuteAgo),
+      sumTokensSince(db, userId, SESSION_AUTH_TYPE, oneDayAgo),
+      getUserTier(userId),
+    ]);
 
   return {
     requestsLastMinute,
     requestsLastDay,
-    tokensLastMinute: tokensMinute[0]?.total || 0,
-    tokensLastDay: tokensDay[0]?.total || 0,
+    tokensLastMinute,
+    tokensLastDay,
     tier,
     limits: TIER_RATE_LIMITS[tier] || TIER_RATE_LIMITS.free,
   };
@@ -237,6 +243,9 @@ export async function recordUsage(
       return;
     }
 
+    // `authType` is set in the initialiser rather than assigned afterwards. The
+    // two-step form did not type-check (`UsageRecord` requires it), which is one
+    // of the six errors this package carried on master.
     const usageRecord: UsageRecord = {
       oxyUserId,
       endpoint: req.path,
@@ -248,16 +257,29 @@ export async function recordUsage(
       userAgent: req.headers['user-agent'],
       ipAddress: req.ip || req.socket?.remoteAddress,
       timestamp: new Date(),
+      authType: req.serviceApp ? 'internal' : 'session',
+      ...(req.serviceApp ? { serviceApp: req.serviceApp.appName } : {}),
     };
 
-    if (req.serviceApp) {
-      usageRecord.authType = 'internal';
-      usageRecord.serviceApp = req.serviceApp.appName;
-    } else {
-      usageRecord.authType = 'session';
-    }
-
-    await ApiKeyUsage.create(usageRecord);
+    // Every optional field is normalised to null rather than left `undefined`.
+    // In Mongo an absent key simply did not store; in Postgres a column omitted
+    // from an INSERT takes its DEFAULT, and one set to `undefined` through
+    // drizzle is dropped from the statement — same outcome here, but spelling it
+    // out means a reader cannot mistake "not provided" for "explicitly cleared".
+    await recordApiKeyUsage(getDb(), {
+      oxyUserId: usageRecord.oxyUserId,
+      endpoint: usageRecord.endpoint,
+      method: usageRecord.method,
+      statusCode: usageRecord.statusCode,
+      tokensUsed: usageRecord.tokensUsed,
+      creditsUsed: usageRecord.creditsUsed,
+      responseTime: usageRecord.responseTime ?? null,
+      userAgent: usageRecord.userAgent ?? null,
+      ipAddress: usageRecord.ipAddress ?? null,
+      timestamp: usageRecord.timestamp,
+      authType: usageRecord.authType,
+      serviceApp: usageRecord.serviceApp ?? null,
+    });
   } catch (error) {
     log.rateLimit.error({ err: error }, 'Failed to record usage');
   }

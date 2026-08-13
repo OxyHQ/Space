@@ -9,7 +9,7 @@
  * {@link listPlans} and {@link patchPlan}.
  */
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PgHandle } from './handle.js';
 import { plans } from '../db/schema/providers.js';
 
@@ -29,11 +29,18 @@ function matchesSlug(value: string) {
  */
 export async function listPlans(
   db: PgHandle,
-  filter: { product?: string; isActive?: boolean } = {},
+  filter: { product?: string; isActive?: boolean; planId?: string; isFree?: boolean } = {},
 ): Promise<PlanRow[]> {
+  // Every predicate is applied in the WHERE clause, not by the caller. The
+  // Mongo callers passed `{ planId, isActive: true, isFree: false }` and took
+  // `[0]`, so narrowing this to `findBySlug` would have returned an inactive
+  // plan where the source returned none — a behaviour change disguised as a
+  // simplification.
   const conditions = [];
   if (filter.product !== undefined) conditions.push(eq(plans.product, filter.product));
   if (filter.isActive !== undefined) conditions.push(eq(plans.isActive, filter.isActive));
+  if (filter.planId !== undefined) conditions.push(matchesSlug(filter.planId));
+  if (filter.isFree !== undefined) conditions.push(eq(plans.isFree, filter.isFree));
 
   return db
     .select()
@@ -82,20 +89,54 @@ export async function deletePlan(db: PgHandle, planId: string): Promise<PlanRow 
 }
 
 /**
- * `seed-plans.ts:165` — insert a plan only if it does not exist.
+ * `seed-plans.ts:165` — insert a plan, and re-sync the one field the seed owns.
  *
- * Pure `$setOnInsert`, so this is `ON CONFLICT DO NOTHING`. That also removes
- * the source's `isDuplicateKeyError` catch, which on Postgres would be worse
- * than useless: an exception cannot tell a duplicate from a dropped connection,
- * so a naive port would answer "already seeded" to an infrastructure failure.
- * With `DO NOTHING RETURNING`, an empty result IS the answer and a real failure
- * still propagates.
+ * ## The seed's update is NOT pure `$setOnInsert`, and the difference matters
+ *
+ * It carries `$set: { modelIds }` as well, under the comment "Always sync
+ * modelIds from seed (code-managed)" — every other column is admin-managed and
+ * written only on insert. So this is `ON CONFLICT DO UPDATE` over exactly one
+ * column, not `DO NOTHING`: the latter reads correctly, passes every test, and
+ * silently ends the code-managed half of the seed's contract, so a plan whose
+ * model list changes in the source would keep serving the old list forever.
+ *
+ * Nothing else may enter that `set` — `excluded` would carry the seed's
+ * defaults for the seventeen columns an operator is expected to have edited by
+ * hand, and re-running the seed would revert every one of them.
+ *
+ * `RETURNING (xmax = 0)` rather than an empty result, because `DO UPDATE`
+ * always returns a row: it is the only way to tell an inserted row from an
+ * updated one in a single statement, and it is what `upsertedCount` meant.
+ *
+ * A caller that supplies NO `modelIds` has nothing to re-sync, so that case
+ * stays `DO NOTHING`. The two branches are not two ways of doing one thing —
+ * they are the two things the argument means. Collapsing them is what breaks:
+ * `set: { modelIds: undefined }` is an empty SET clause and drizzle throws
+ * `No values to set`, and coalescing instead would write the column DEFAULT
+ * (`'{}'`) over a real list, because an omitted column in `excluded` takes its
+ * default rather than NULL.
+ *
+ * Either way this removes the source's `isDuplicateKeyError` catch, which on
+ * Postgres would be worse than useless: an exception cannot tell a duplicate
+ * from a dropped connection, so a naive port would answer "already seeded" to
+ * an infrastructure failure. Here no statement fails, so a real failure still
+ * propagates.
  */
 export async function seedPlan(db: PgHandle, values: NewPlan): Promise<boolean> {
-  const inserted = await db
-    .insert(plans)
-    .values({ ...values, planId: values.planId.toLowerCase() })
-    .onConflictDoNothing({ target: plans.planId })
-    .returning({ id: plans.id });
-  return inserted.length > 0;
+  const insert = db.insert(plans).values({ ...values, planId: values.planId.toLowerCase() });
+
+  if (values.modelIds === undefined) {
+    const inserted = await insert
+      .onConflictDoNothing({ target: plans.planId })
+      .returning({ id: plans.id });
+    return inserted.length > 0;
+  }
+
+  const [row] = await insert
+    .onConflictDoUpdate({
+      target: plans.planId,
+      set: { modelIds: values.modelIds },
+    })
+    .returning({ inserted: sql<boolean>`(xmax = 0)` });
+  return row.inserted;
 }

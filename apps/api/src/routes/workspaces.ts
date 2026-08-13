@@ -6,13 +6,21 @@ import {
   requireRole,
   requireWorkspaceMember,
 } from '../middleware/workspace.js';
-import { Workspace } from '../models/workspace.js';
+import { getDb } from '../db/client.js';
+import type { WorkspaceRole } from '../db/schema/workspaces.js';
+import { deleteArchivedPages } from '../repositories/pages.js';
 import {
-  WorkspaceMember,
-  type WorkspaceRole,
-} from '../models/workspace-member.js';
-import { Page } from '../models/page.js';
-import { Block } from '../models/block.js';
+  addMember,
+  archiveWorkspace,
+  createWorkspace,
+  findMembership,
+  listLiveWorkspacesByIds,
+  listMembers,
+  listMembershipsForUser,
+  removeMember,
+  updateMemberRole,
+  updateWorkspace,
+} from '../repositories/workspaces.js';
 import { log } from '../lib/logger.js';
 
 const router = Router();
@@ -83,24 +91,22 @@ router.get(
         return;
       }
 
-      const memberships = await WorkspaceMember.find({ userId: req.user.id })
-        .sort({ joinedAt: -1 })
-        .lean();
+      const db = getDb();
+      const memberships = await listMembershipsForUser(db, req.user.id);
 
       if (memberships.length === 0) {
         res.json({ workspaces: [] });
         return;
       }
 
-      const workspaceIds = memberships.map((m) => m.workspaceId);
-      const workspaces = await Workspace.find({
-        _id: { $in: workspaceIds },
-        archivedAt: null,
-      });
+      const workspaces = await listLiveWorkspacesByIds(
+        db,
+        memberships.map((m) => m.workspaceId),
+      );
 
       const roleByWorkspace = new Map<string, WorkspaceRole>();
       for (const m of memberships) {
-        roleByWorkspace.set(String(m.workspaceId), m.role);
+        roleByWorkspace.set(m.workspaceId, m.role);
       }
 
       const serialized = workspaces
@@ -156,39 +162,35 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
     const userId = req.user.id;
     const { name, icon } = parsed.data;
 
-    // Two-step create. MongoDB transactions require a replica set which we
-    // do not assume in dev. On member-create failure we roll back the
-    // workspace so we never leak an unowned shared workspace.
-    const workspace = new Workspace({
-      name,
-      icon: icon ?? null,
-      ownerId: userId,
-      isPersonal: false,
-    });
-    await workspace.save();
-
-    try {
-      const member = new WorkspaceMember({
-        workspaceId: workspace._id,
+    // ONE transaction, replacing a two-step create with a hand-rolled
+    // rollback. That rollback existed because Mongo transactions need a
+    // replica set the dev environment does not assume — but it leaves a real
+    // window: if the process dies between the two saves, the workspace exists
+    // with no owner and nobody can reach it or delete it. Postgres has real
+    // transactions, so the window closes rather than narrows.
+    const db = getDb();
+    const workspace = await db.transaction(async (tx) => {
+      const created = await createWorkspace(tx, {
+        name,
+        icon: icon ?? null,
+        ownerId: userId,
+        isPersonal: false,
+      });
+      const owner = await addMember(tx, {
+        workspaceId: created.id,
         userId,
         role: 'owner',
         invitedBy: null,
-        joinedAt: new Date(),
       });
-      await member.save();
-    } catch (memberErr: unknown) {
-      log.general.error(
-        { err: memberErr, workspaceId: workspace.id },
-        'Owner member create failed, rolling back workspace',
-      );
-      await workspace.deleteOne().catch((rollbackErr: unknown) => {
-        log.general.error(
-          { err: rollbackErr, workspaceId: workspace.id },
-          'Workspace rollback failed',
-        );
-      });
-      throw memberErr;
-    }
+      if ('duplicate' in owner) {
+        // Unreachable in practice — the workspace id was generated inside this
+        // transaction, so no membership can already reference it. Throwing
+        // rolls the whole thing back rather than returning a workspace whose
+        // owner row silently did not land.
+        throw new Error('owner membership collided on a freshly created workspace');
+      }
+      return created;
+    });
 
     res.status(201).json({
       workspace: serializeWorkspace(
@@ -269,9 +271,14 @@ router.patch(
       }
 
       const ws = req.workspaceDoc;
-      if (parsed.data.name !== undefined) ws.name = parsed.data.name;
-      if (parsed.data.icon !== undefined) ws.icon = parsed.data.icon;
-      await ws.save();
+      const updated = await updateWorkspace(getDb(), ws.id, {
+        name: parsed.data.name,
+        icon: parsed.data.icon,
+      });
+      if (!updated) {
+        res.status(404).json({ error: 'Workspace not found' });
+        return;
+      }
 
       res.json({
         workspace: serializeWorkspace(
@@ -327,9 +334,12 @@ router.delete(
         return;
       }
 
-      ws.archivedAt = new Date();
-      await ws.save();
-      res.json({ success: true, archivedAt: ws.archivedAt });
+      const archived = await archiveWorkspace(getDb(), ws.id);
+      if (!archived) {
+        res.status(404).json({ error: 'Workspace not found' });
+        return;
+      }
+      res.json({ success: true, archivedAt: archived.archivedAt });
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to archive workspace');
       res.status(500).json({ error: 'Failed to archive workspace' });
@@ -353,9 +363,7 @@ router.get(
         return;
       }
 
-      const members = await WorkspaceMember.find({ workspaceId: req.workspaceDoc._id })
-        .sort({ joinedAt: 1 })
-        .lean();
+      const members = await listMembers(getDb(), req.workspaceDoc.id);
 
       res.json({
         members: members.map((m) => ({
@@ -437,20 +445,28 @@ router.post(
       }
 
       try {
-        const member = await WorkspaceMember.create({
-          workspaceId: ws._id,
+        // The LOUD counterpart to the idempotent provisioning path: "already a
+        // member" is an answer this caller must show the user as a 409, not
+        // swallow. `addMember` reads the SQLSTATE off `cause` — a ported
+        // `err.code === '23505'` matches nothing and the branch collapses.
+        const result = await addMember(getDb(), {
+          workspaceId: ws.id,
           userId: invitee.id,
           role,
           invitedBy: req.user.id,
-          joinedAt: new Date(),
         });
+
+        if ('duplicate' in result) {
+          res.status(409).json({ error: 'That user is already a member' });
+          return;
+        }
 
         res.status(201).json({
           member: {
-            userId: member.userId,
-            role: member.role,
-            invitedBy: member.invitedBy,
-            joinedAt: member.joinedAt,
+            userId: result.member.userId,
+            role: result.member.role,
+            invitedBy: result.member.invitedBy,
+            joinedAt: result.member.joinedAt,
           },
         });
       } catch (createErr: unknown) {
@@ -498,10 +514,7 @@ router.patch(
         return;
       }
 
-      const target = await WorkspaceMember.findOne({
-        workspaceId: req.workspaceDoc._id,
-        userId: targetUserId,
-      });
+      const target = await findMembership(getDb(), req.workspaceDoc.id, targetUserId);
       if (!target) {
         res.status(404).json({ error: 'Member not found' });
         return;
@@ -511,15 +524,23 @@ router.patch(
         return;
       }
 
-      target.role = parsed.data.role;
-      await target.save();
+      const updated = await updateMemberRole(
+        getDb(),
+        req.workspaceDoc.id,
+        targetUserId,
+        parsed.data.role,
+      );
+      if (!updated) {
+        res.status(404).json({ error: 'Member not found' });
+        return;
+      }
 
       res.json({
         member: {
-          userId: target.userId,
-          role: target.role,
-          invitedBy: target.invitedBy,
-          joinedAt: target.joinedAt,
+          userId: updated.userId,
+          role: updated.role,
+          invitedBy: updated.invitedBy,
+          joinedAt: updated.joinedAt,
         },
       });
     } catch (error: unknown) {
@@ -561,10 +582,7 @@ router.delete(
         return;
       }
 
-      const target = await WorkspaceMember.findOne({
-        workspaceId: req.workspaceDoc._id,
-        userId: targetUserId,
-      });
+      const target = await findMembership(getDb(), req.workspaceDoc.id, targetUserId);
       if (!target) {
         res.status(404).json({ error: 'Member not found' });
         return;
@@ -574,7 +592,14 @@ router.delete(
         return;
       }
 
-      await target.deleteOne();
+      // `removeMember` reports off RETURNING. Mongo gave `deletedCount`;
+      // Postgres gives only `rowCount`, and `rows.length` on a bare DELETE is
+      // 0 whether or not anything went.
+      const removed = await removeMember(getDb(), req.workspaceDoc.id, targetUserId);
+      if (!removed) {
+        res.status(404).json({ error: 'Member not found' });
+        return;
+      }
       res.json({ success: true });
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to remove member');
@@ -601,23 +626,18 @@ router.post(
         return;
       }
 
-      const archivedPages = await Page.find({
-        workspaceId: req.workspaceDoc._id,
-        archived: true,
-      })
-        .select('_id')
-        .lean();
+      // Blocks are removed by the `blocks.page_id -> pages.id` cascade, so the
+      // explicit Block.deleteMany is gone rather than reimplemented — an
+      // application-level cascade racing the database one is worse than either
+      // alone. The count comes from RETURNING; the old code fell back to
+      // `ids.length` when deletedCount was absent, which reports a full delete
+      // for a partial one.
+      // The old early return for "nothing archived" is gone with the query it
+      // guarded: one statement that deletes zero rows returns 0, which is the
+      // same answer for one fewer round trip.
+      const deleted = await deleteArchivedPages(getDb(), req.workspaceDoc.id);
 
-      if (archivedPages.length === 0) {
-        res.json({ success: true, deleted: 0 });
-        return;
-      }
-
-      const ids = archivedPages.map((p) => p._id);
-      await Block.deleteMany({ pageId: { $in: ids } });
-      const result = await Page.deleteMany({ _id: { $in: ids } });
-
-      res.json({ success: true, deleted: result.deletedCount ?? ids.length });
+      res.json({ success: true, deleted });
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to empty workspace trash');
       res.status(500).json({ error: 'Failed to empty trash' });

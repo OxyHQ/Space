@@ -201,6 +201,34 @@ export async function listProviderMappings(
 }
 
 /**
+ * `routes/clarity-models.ts:33` — mappings for a whole page of Clarity models.
+ *
+ * `GET /v1/clarity-models` returned Mongo DOCUMENTS, so every row in that list
+ * carried its embedded `providerMappings` array. Once the array is a child
+ * table the list endpoint has to fetch them, and doing that per model is an
+ * N+1 the source did not have. One `inArray` keeps it at two round trips.
+ *
+ * Ordered by model then position so the caller can bucket in one pass, and so
+ * each model's mappings arrive in the order the source array had — `position`
+ * is what preserves it, and without the sort the fallback chain would come back
+ * in whatever order the scan produced.
+ */
+export async function listProviderMappingsForModels(
+  db: PgHandle,
+  clarityModelRowIds: readonly string[],
+): Promise<ProviderMappingRow[]> {
+  if (clarityModelRowIds.length === 0) return [];
+  return db
+    .select()
+    .from(clarityModelProviderMappings)
+    .where(inArray(clarityModelProviderMappings.clarityModelId, [...clarityModelRowIds]))
+    .orderBy(
+      asc(clarityModelProviderMappings.clarityModelId),
+      asc(clarityModelProviderMappings.position),
+    );
+}
+
+/**
  * Active mappings by ascending priority — the shape `getAvailableProviders`
  * built in JavaScript (`clarity-model.ts:211`).
  *

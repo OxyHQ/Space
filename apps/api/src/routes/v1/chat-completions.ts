@@ -3,8 +3,9 @@ import { Router, Request, Response } from 'express';
 import { streamText, generateText, stepCountIs } from 'ai';
 import { resolveModel, getAIModel, getDefaultClarityModel, reportModelUsage } from '../../lib/chat-core.js';
 import { getClarityModel, getModelMappingsForTier } from '../../lib/gateway-client.js';
-import { getOrCreateUserCredits } from '../../lib/user-credits-helpers.js';
-import { Conversation } from '../../models/conversation.js';
+import { getDb } from '../../db/client.js';
+import { getOrCreateUserCredits } from '../../repositories/userCredits.js';
+import { updateTitle } from '../../repositories/conversations.js';
 import { reserveCredits, refundReservation, type CreditReservation, type CreditUsage } from '../../lib/credits-manager.js';
 import {
   saveConversationResult,
@@ -181,7 +182,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
       // Credits: sequential pair (getOrCreate → reserve), parallel with everything else
       // Skip for internal service requests (no credits charged)
       (req.user && !req.serviceApp) ? (async () => {
-        await getOrCreateUserCredits(req.user!.id);
+        await getOrCreateUserCredits(getDb(), req.user!.id);
         const reservation = await reserveCredits(req.user!.id);
         return { reservation, error: false as const };
       })().catch((error) => {
@@ -967,10 +968,7 @@ export const handleChatCompletions = async (req: Request, res: Response) => {
         const title = await titlePromise;
         if (title) {
           res.write(`event: oxystation.title\ndata: ${JSON.stringify({ eventVersion: 1, title, conversationId })}\n\n`);
-          await Conversation.updateOne(
-            { oxyUserId: req.user.id, conversationId },
-            { $set: { title } },
-          );
+          await updateTitle({ oxyUserId: req.user.id, conversationId }, title);
           log.v1.info({ conversationId, title }, 'Auto-generated conversation title');
         }
       } catch (err) {

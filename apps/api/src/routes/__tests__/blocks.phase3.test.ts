@@ -1,109 +1,96 @@
 /**
- * Phase 3 block-type smoke tests. We import the route module (which holds
- * the Zod schemas) by exercising the same path the HTTP layer goes through.
+ * Block content normalization — the per-type shapes `POST /api/pages/:pageId/blocks`
+ * and `PATCH /api/blocks/:id` persist.
  *
- * The route module is large; rather than mounting Express, we re-build the
- * minimum schema set inline and verify each new type accepts a representative
- * payload and rejects clearly-invalid input. This mirrors what
- * `normalizeContent` does behind /blocks endpoints.
+ * These assertions used to run against a hand-written COPY of the Zod schemas,
+ * rebuilt inline in this file because "the route module is large". That made
+ * them a test of the copy: when the route moved off 24-hex ObjectIds and onto
+ * `isLiveEntityId`, the copy kept its old regex and kept passing, asserting a
+ * contract the shipped code no longer had. They now call the real
+ * `normalizeContent`.
  */
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
+import { uuidv7 } from '@oxyhq/db';
+import { normalizeContent } from '../blocks.js';
 
-const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/u);
-
-const styleFields = {
-  color: z.string().optional(),
-  backgroundColor: z.string().optional(),
-} as const;
-
-const imageContentSchema = z.object({
-  url: z.string().default(''),
-  caption: z.string().optional(),
-  alt: z.string().optional(),
-  width: z.number().finite().positive().optional(),
-  ...styleFields,
-});
-
-const videoContentSchema = z.object({
-  url: z.string().default(''),
-  source: z.enum(['upload', 'youtube', 'vimeo', 'loom', 'other']).default('other'),
-  caption: z.string().optional(),
-  ...styleFields,
-});
-
-const fileContentSchema = z.object({
-  url: z.string().default(''),
-  name: z.string().default(''),
-  size: z.number().int().nonnegative().default(0),
-  mimeType: z.string().default('application/octet-stream'),
-  ...styleFields,
-});
-
-const columnsContentSchema = z.object({
-  columnCount: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(2),
-  ...styleFields,
-});
-
-const tableContentSchema = z.object({
-  rows: z.number().int().positive().default(2),
-  cols: z.number().int().positive().default(2),
-  withHeader: z.boolean().default(false),
-  ...styleFields,
-});
-
-const linkToPageContentSchema = z.object({
-  pageId: objectId.default('000000000000000000000000'),
-  ...styleFields,
-});
-
-const equationContentSchema = z.object({
-  latex: z.string().default(''),
-  ...styleFields,
-});
-
-describe('Phase 3 block content schemas', () => {
+describe('block content normalization', () => {
   it('validates image content', () => {
-    const out = imageContentSchema.parse({ url: 'https://cdn/image.png', caption: 'cap' });
+    const out = normalizeContent('image', {
+      url: 'https://cdn/image.png',
+      caption: 'cap',
+    });
     expect(out.url).toBe('https://cdn/image.png');
     expect(out.caption).toBe('cap');
   });
 
   it('defaults video source to "other"', () => {
-    const out = videoContentSchema.parse({ url: 'https://example.com/v.mp4' });
+    const out = normalizeContent('video', { url: 'https://example.com/v.mp4' });
     expect(out.source).toBe('other');
   });
 
   it('rejects unknown video source', () => {
-    expect(() => videoContentSchema.parse({ source: 'invalid' as never })).toThrow();
+    expect(() => normalizeContent('video', { source: 'invalid' })).toThrow();
   });
 
   it('defaults file mime type', () => {
-    const out = fileContentSchema.parse({ url: 'https://cdn/a.bin', name: 'a.bin', size: 12 });
+    const out = normalizeContent('file', {
+      url: 'https://cdn/a.bin',
+      name: 'a.bin',
+      size: 12,
+    });
     expect(out.mimeType).toBe('application/octet-stream');
   });
 
   it('only accepts 2/3/4 columns', () => {
-    const ok = columnsContentSchema.parse({ columnCount: 3 });
-    expect(ok.columnCount).toBe(3);
-    expect(() => columnsContentSchema.parse({ columnCount: 5 as 2 | 3 | 4 })).toThrow();
+    expect(normalizeContent('columns', { columnCount: 3 }).columnCount).toBe(3);
+    expect(() => normalizeContent('columns', { columnCount: 5 })).toThrow();
   });
 
   it('defaults table rows/cols', () => {
-    const out = tableContentSchema.parse({});
+    const out = normalizeContent('table', {});
     expect(out.rows).toBe(2);
     expect(out.cols).toBe(2);
     expect(out.withHeader).toBe(false);
   });
 
-  it('rejects non-ObjectId link_to_page', () => {
-    expect(() =>
-      linkToPageContentSchema.parse({ pageId: 'not-an-objectid' }),
-    ).toThrow();
+  it('accepts equation latex strings', () => {
+    const out = normalizeContent('equation', { latex: '\\frac{a}{b}' });
+    expect(out.latex).toBe('\\frac{a}{b}');
   });
 
-  it('accepts equation latex strings', () => {
-    const out = equationContentSchema.parse({ latex: '\\frac{a}{b}' });
-    expect(out.latex).toBe('\\frac{a}{b}');
+  /**
+   * The id contract, which is the reason this file stopped re-implementing the
+   * schemas. `link_to_page` and `inline_database` carry an id of another row,
+   * and `pages.id` is a uuid v7 now — so a 24-hex-only validator rejects every
+   * link the editor can currently create. Reverting `entityIdSchema` to the old
+   * regex fails the first of these three and nothing else in the suite.
+   */
+  describe('target ids', () => {
+    it('accepts a uuid v7 page id on link_to_page', () => {
+      const id = uuidv7();
+      expect(normalizeContent('link_to_page', { pageId: id }).pageId).toBe(id);
+    });
+
+    it('accepts a 24-hex ObjectId, which a backfilled row still carries', () => {
+      const id = '507f1f77bcf86cd799439011';
+      expect(normalizeContent('link_to_page', { pageId: id }).pageId).toBe(id);
+    });
+
+    it('rejects an id of neither shape', () => {
+      expect(() =>
+        normalizeContent('link_to_page', { pageId: 'not-an-id' }),
+      ).toThrow();
+    });
+
+    it('defaults an unpicked target to a sentinel that names no row', () => {
+      // The UI replaces this the moment a target is chosen; it exists so the
+      // type-changed-to-link_to_page path does not fail validation.
+      expect(normalizeContent('link_to_page', {}).pageId).toBe(
+        '000000000000000000000000',
+      );
+      expect(normalizeContent('inline_database', {}).databaseId).toBe(
+        '000000000000000000000000',
+      );
+    });
   });
 });

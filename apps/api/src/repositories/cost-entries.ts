@@ -67,10 +67,29 @@ function inWindow(from?: Date, to?: Date) {
  * This is an unbounded scan, exactly as the source is. Making it a keyset page
  * would change what the summary covers, so it stays a scan and the cost is
  * flagged rather than quietly altered.
+ *
+ * ## Why this one returns the internal pair and {@link listRecentForUser} does not
+ *
+ * `calculateCost(provider, modelId, ...)` resolves pricing from `actualModelId`.
+ * Projected to the user-facing columns, that argument is `undefined` at every
+ * call site, `getModelPricing` falls back to a default, and `cacheSavings` comes
+ * back a plausible wrong number with nothing thrown — the exact silent shape
+ * this ledger's internal/external split exists to prevent.
+ *
+ * The split is about what REACHES A RESPONSE, not about what a computation may
+ * read. `getUserCostSummary` returns `UserCostSummary`, whose every field is
+ * either a scalar or a map keyed by `clarityModelId`; no caller of this function
+ * puts a row on the wire. {@link listRecentForUser} stays projected precisely
+ * because its rows ARE serialised into `getUserDashboardData`'s response.
  */
-export async function listForUser(db: PgHandle, userId: string, from?: Date, to?: Date) {
+export async function listForUser(
+  db: PgHandle,
+  userId: string,
+  from?: Date,
+  to?: Date,
+): Promise<CostEntryRow[]> {
   return db
-    .select(USER_FACING_COLUMNS)
+    .select()
     .from(costEntries)
     .where(and(eq(costEntries.userId, userId), ...inWindow(from, to)))
     .orderBy(asc(costEntries.timestamp), asc(costEntries.id));

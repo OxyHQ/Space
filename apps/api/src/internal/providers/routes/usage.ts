@@ -4,8 +4,13 @@
  */
 
 import express, { Request, Response } from 'express';
-import ApiKeyUsage from '../../../models/api-key-usage';
-import { getGlobalCostStats } from '../../../lib/cost-tracker';
+import { getDb } from '../../../db/client.js';
+import {
+  usageByDaySince,
+  usageByEndpointSince,
+  usageSummarySince,
+} from '../../../repositories/apiKeyUsage.js';
+import { getGlobalCostStats } from '../../../lib/cost-tracker.js';
 import { log } from '../../../lib/logger.js';
 
 const router = express.Router();
@@ -43,62 +48,28 @@ router.get('/', async (req: Request, res: Response) => {
     const period = (req.query.period as string) || '7d';
     const startDate = getStartDate(period);
 
-    const [summary] = await ApiKeyUsage.aggregate([
-      { $match: { timestamp: { $gte: startDate } } },
-      {
-        $group: {
-          _id: null,
-          totalRequests: { $sum: 1 },
-          totalTokens: { $sum: '$tokensUsed' },
-          totalCredits: { $sum: '$creditsUsed' },
-          avgResponseTime: { $avg: '$responseTime' },
-          successfulRequests: {
-            $sum: { $cond: [{ $lt: ['$statusCode', 400] }, 1, 0] },
-          },
-          errorRequests: {
-            $sum: { $cond: [{ $gte: ['$statusCode', 400] }, 1, 0] },
-          },
-        },
-      },
-    ]);
+    const db = getDb();
 
-    const byDay = await ApiKeyUsage.aggregate([
-      { $match: { timestamp: { $gte: startDate } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-          requests: { $sum: 1 },
-          tokens: { $sum: '$tokensUsed' },
-          credits: { $sum: '$creditsUsed' },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    const byEndpoint = await ApiKeyUsage.aggregate([
-      { $match: { timestamp: { $gte: startDate } } },
-      {
-        $group: {
-          _id: '$endpoint',
-          requests: { $sum: 1 },
-          tokens: { $sum: '$tokensUsed' },
-        },
-      },
-      { $sort: { requests: -1 } },
-      { $limit: 10 },
+    // Every figure here is a `sum()`, `avg()` or `count()`, which postgres.js
+    // decodes as a STRING while drizzle types them `number`. The repository
+    // coerces at that boundary; a dashboard adding two of them would otherwise
+    // concatenate without erroring.
+    //
+    // The `summary || {...}` fallback the Mongo version needed is gone: an empty
+    // `$group` produced NO DOCUMENT, while a Postgres aggregate over an empty
+    // set returns one row of NULLs, which the repository turns into zeroes.
+    const [summary, byDay, byEndpoint] = await Promise.all([
+      usageSummarySince(db, startDate),
+      usageByDaySince(db, startDate),
+      usageByEndpointSince(db, startDate),
     ]);
 
     res.json({
       success: true,
       data: {
-        summary: summary || {
-          totalRequests: 0,
-          totalTokens: 0,
-          totalCredits: 0,
-          avgResponseTime: 0,
-          successfulRequests: 0,
-          errorRequests: 0,
-        },
+        summary,
+        // `_id` is gone from both groupings: the day bucket is `date` and the
+        // endpoint bucket is `endpoint`.
         byDay,
         byEndpoint,
       },

@@ -1,45 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('../../models/workspace.js', () => ({
-  Workspace: vi.fn(),
-}));
-
-vi.mock('../../models/workspace-member.js', async () => {
-  // We keep the real helpers (compareRoles, hasRole) — only mock the
-  // model. This way we can verify role-hierarchy logic without spinning
-  // up Mongo.
-  const actual = await vi.importActual<typeof import('../../models/workspace-member.js')>(
-    '../../models/workspace-member.js',
-  );
-  return {
-    ...actual,
-    WorkspaceMember: vi.fn(),
-  };
-});
-
-vi.mock('../../models/share-link.js', () => ({
-  ShareLink: vi.fn(),
-  SHARE_LINK_SCOPES: ['read', 'comment', 'edit'],
-}));
-
-vi.mock('../../middleware/auth.js', () => ({
-  authenticateToken: vi.fn((_req: any, _res: any, next: any) => next()),
-  oxyClient: { getUserById: vi.fn(), searchProfiles: vi.fn() },
-}));
-
-vi.mock('../../middleware/workspace.js', () => ({
-  ensurePersonalWorkspace: vi.fn((_req: any, _res: any, next: any) => next()),
-  requireWorkspaceMember: vi.fn((_req: any, _res: any, next: any) => next()),
-  requireRole: vi.fn(() => (_req: any, _res: any, next: any) => next()),
-}));
-
-vi.mock('../../lib/logger.js', () => ({
-  log: {
-    general: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  },
-}));
-
-import { compareRoles, hasRole, WORKSPACE_ROLES } from '../../models/workspace-member.js';
+import { compareRoles, hasRole, WORKSPACE_ROLES } from '../../db/schema/workspaces.js';
 
 describe('workspace role helpers', () => {
   it('orders roles viewer < commenter < editor < admin < owner', () => {

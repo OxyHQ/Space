@@ -21,8 +21,24 @@ import { createdAt, generatedId, inList, timestamptz, updatedAt } from '@oxyhq/d
  *   name, so `workspaceId` would become `workspaceid` and fail with 42703.
  */
 
+/**
+ * Ordered weakest to strongest. The ORDER is the permission model — `hasRole`
+ * reads it positionally — so reordering this array silently changes who can do
+ * what, and the CHECK below is derived from it so the database and the
+ * comparison cannot disagree about which roles exist.
+ */
 export const WORKSPACE_ROLES = ['viewer', 'commenter', 'editor', 'admin', 'owner'] as const;
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
+
+/** Negative when `a` is weaker than `b`, zero when equal, positive when stronger. */
+export function compareRoles(a: WorkspaceRole, b: WorkspaceRole): number {
+  return WORKSPACE_ROLES.indexOf(a) - WORKSPACE_ROLES.indexOf(b);
+}
+
+/** Whether `actual` meets or exceeds `required`. */
+export function hasRole(actual: WorkspaceRole, required: WorkspaceRole): boolean {
+  return compareRoles(actual, required) >= 0;
+}
 
 export const WORKSPACE_NAME_MAX = 200;
 
@@ -90,7 +106,13 @@ export const workspaceMembers = pgTable(
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     /** Oxy user id — see the note on `workspaces.ownerId`. */
     userId: text().notNull(),
-    role: text().notNull().default('viewer'),
+    /**
+     * `$type` so the column and the CHECK below say the same thing. Without it
+     * the column reads as `string` and every consumer narrows it by hand or
+     * casts -- a property the database enforces needs a gate in the type
+     * system too, or the two drift and only one of them fails.
+     */
+    role: text().$type<WorkspaceRole>().notNull().default('viewer'),
     /** User id of the inviter, or null for the auto-created owner row. */
     invitedBy: text(),
     joinedAt: timestamptz().notNull().defaultNow(),

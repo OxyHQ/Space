@@ -232,10 +232,18 @@ export async function updateSubscriptionPlan(
   return rows[0] ?? null;
 }
 
-/** `billing-admin.ts:66` — the admin listing. */
+/**
+ * `billing-admin.ts:66` — the admin listing, filtered by an optional user,
+ * status and/or PRODUCT.
+ *
+ * `product` filters `planProduct`, the flattened `'plan.product'` the admin
+ * route's Mongo query reached. It was missing from this signature when the
+ * repository was written; see the matching note in `transactions.ts` for why a
+ * dropped filter clause is the dangerous direction.
+ */
 export async function listSubscriptions(
   db: StationDatabase,
-  filter: { oxyUserId?: string; status?: string },
+  filter: SubscriptionFilter,
   options: { limit: number; offset: number },
 ): Promise<SubscriptionRow[]> {
   return db
@@ -250,7 +258,7 @@ export async function listSubscriptions(
 /** Companion count — `billing-admin.ts:67`. `count(*)` is bigint; see below. */
 export async function countSubscriptions(
   db: StationDatabase,
-  filter: { oxyUserId?: string; status?: string },
+  filter: SubscriptionFilter,
 ): Promise<number> {
   const rows = await db
     .select({ total: sql<string>`count(*)` })
@@ -271,10 +279,13 @@ export async function listSubscriptionsByUser(
     .orderBy(desc(subscriptions.createdAt), desc(subscriptions.id));
 }
 
+export type SubscriptionFilter = { oxyUserId?: string; status?: string; product?: string };
+
 /** See the note on `transactionFilter` — an absent key drops its clause. */
-function subscriptionFilter(filter: { oxyUserId?: string; status?: string }): SQL | undefined {
+function subscriptionFilter(filter: SubscriptionFilter): SQL | undefined {
   const clauses: SQL[] = [];
   if (filter.oxyUserId !== undefined) clauses.push(eq(subscriptions.oxyUserId, filter.oxyUserId));
   if (filter.status !== undefined) clauses.push(eq(subscriptions.status, filter.status));
+  if (filter.product !== undefined) clauses.push(eq(subscriptions.planProduct, filter.product));
   return clauses.length > 0 ? and(...clauses) : undefined;
 }

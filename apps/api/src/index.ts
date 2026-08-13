@@ -4,7 +4,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { connectDB } from './lib/db.js';
+import { sql } from 'drizzle-orm';
+import { closeDb, getDb } from './db/client.js';
 import { log } from './lib/logger.js';
 import { isAbortError, isFatalError, isTransientNetworkError } from './lib/error-classification.js';
 
@@ -251,8 +252,14 @@ process.on('uncaughtException', (error) => {
   setTimeout(() => process.exit(1), 5000).unref();
 });
 
-// Connect to MongoDB before starting the server
-connectDB()
+/**
+ * Prove the database the service actually reads is reachable before accepting
+ * traffic. A handle that merely constructs proves nothing — `createDatabase`
+ * is lazy — so this issues a real statement. "Connected" and "answers a query"
+ * are different claims, and only the second is worth gating a listen on.
+ */
+getDb()
+  .execute(sql`select 1`)
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => {
       log.general.info({ port: PORT }, 'API server listening');
@@ -304,10 +311,9 @@ connectDB()
         await closeRedis();
         log.general.info('Redis connections closed');
 
-        // Close MongoDB connection
-        const mongoose = await import('mongoose');
-        await mongoose.default.connection.close();
-        log.general.info('MongoDB connection closed');
+        // Close the Postgres pool
+        await closeDb();
+        log.general.info('Postgres pool closed');
 
         clearTimeout(forceTimeout);
         log.general.info('Graceful shutdown complete');

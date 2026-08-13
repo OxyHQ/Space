@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { getOrCreateUserCredits } from '../lib/user-credits-helpers.js';
-import ApiKeyUsage from '../models/api-key-usage.js';
+import { getDb } from '../db/client.js';
+import { dailyCreditUsageByUser } from '../repositories/apiKeyUsage.js';
+import { getOrCreateUserCredits, refreshCreditsIfNeeded } from '../repositories/userCredits.js';
 import { log } from '../lib/logger.js';
 import { sanitizeMessage } from '../lib/errors/sanitize.js';
 
@@ -11,16 +12,27 @@ const getSafeErrorMessage = (error: unknown, fallback: string): string =>
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const userCredits = await getOrCreateUserCredits(req.user!.id);
-    await userCredits.refreshCreditsIfNeeded();
+    const db = getDb();
+
+    // `getOrCreate` first, then refresh — the source's two steps, and the order
+    // matters: `refreshCreditsIfNeeded` updates a row and reports nothing when
+    // there is none, so it cannot create the account.
+    await getOrCreateUserCredits(db, req.user!.id);
+    const { row } = await refreshCreditsIfNeeded(db, req.user!.id);
+    if (!row) {
+      // The row was created a statement ago; its absence here means someone
+      // deleted it mid-request, which is not a 200.
+      res.status(500).json({ error: 'Failed to fetch credits' });
+      return;
+    }
 
     res.json({
-      credits: userCredits.credits.free + userCredits.credits.paid,
-      freeCredits: userCredits.credits.free,
-      freeLimit: userCredits.credits.freeLimit,
-      paidCredits: userCredits.credits.paid,
-      dailyRefresh: userCredits.credits.dailyRefresh,
-      lastRefresh: userCredits.credits.lastRefresh,
+      credits: row.creditsFree + row.creditsPaid,
+      freeCredits: row.creditsFree,
+      freeLimit: row.creditsFreeLimit,
+      paidCredits: row.creditsPaid,
+      dailyRefresh: row.creditsDailyRefresh,
+      lastRefresh: row.creditsLastRefresh,
     });
   } catch (error: unknown) {
     log.credits.error({ err: error }, 'Error');
@@ -38,44 +50,18 @@ router.get('/usage', authenticateToken, async (req, res) => {
     since.setDate(since.getDate() - days);
     since.setHours(0, 0, 0, 0);
 
-    const usage = await ApiKeyUsage.aggregate([
-      {
-        $match: {
-          oxyUserId: req.user!.id,
-          timestamp: { $gte: since },
-          $or: [
-            { creditsUsed: { $gt: 0 } },
-            { tokensUsed: { $gt: 0 } },
-          ],
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$timestamp' },
-          },
-          used: {
-            $sum: {
-              $cond: {
-                if: { $gt: ['$creditsUsed', 0] },
-                then: '$creditsUsed',
-                else: { $max: [{ $ceil: { $divide: ['$tokensUsed', 1000] } }, 1] },
-              },
-            },
-          },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
+    // Returns only days that HAVE usage, exactly as the `$group` did. The gaps
+    // are filled below, which is where the source filled them.
+    const usage = await dailyCreditUsageByUser(getDb(), req.user!.id, since);
 
     // Build a complete array with all days (fill gaps with 0)
     const result: { date: string; used: number }[] = [];
-    const usageMap = new Map(usage.map((u: any) => [u._id, u.used]));
+    const usageMap = new Map(usage.map((u) => [u.date, u.used]));
     for (let i = 0; i < days; i++) {
       const d = new Date(since);
       d.setDate(d.getDate() + i);
       const key = d.toISOString().slice(0, 10);
-      result.push({ date: key, used: (usageMap.get(key) as number) || 0 });
+      result.push({ date: key, used: usageMap.get(key) || 0 });
     }
 
     res.json(result);

@@ -35,8 +35,13 @@ import {
  * Every billing table that carried a Mongo TTL index.
  *
  * `api_key_usage` is the only one. Derived by reading each model in this
- * domain for `expireAfterSeconds`: it appears once, at
+ * domain for `expireAfterSeconds`: it appeared once, at
  * `models/api-key-usage.ts:91`.
+ *
+ * That path, and every other `models/*.ts` cited in this file, is the PRE-PORT
+ * Mongoose source. The billing and collab models were deleted when their routes
+ * were rewired; read them at `master` f7834e8 or earlier. The citations are
+ * kept because they are the only record of where each retention came from.
  *
  * INTENT CHECK, because replicating a TTL index without one is how history
  * gets destroyed quietly: this table is pure telemetry — request metering for
@@ -66,16 +71,29 @@ export const BILLING_EXPIRY_TARGETS: readonly ExpirySweepTarget[] = [
  * Derived by grepping `expireAfterSeconds` across the whole repository, not
  * across one directory: two of this domain's three inline-declared models sit
  * outside any `models/` folder, and a census scoped to `models/` sees neither.
- * The repo-wide count is five; one is billing's above, two are here, and the
- * remaining two belong to domains that must register their own —
- * `models/notification.ts:84` (90 days, and PARTIAL on `status: 'dismissed'`,
- * a predicate `ExpirySweepTarget` cannot express) and `models/routing-log.ts:56`
- * (90 days).
  *
- * `internal/providers/models/api-usage.ts` is deliberately ABSENT: it declares
- * no TTL at all. It is easy to mistake for `models/api-key-usage.ts`, which
- * does, and giving it a 90-day retention on that resemblance would start
- * deleting rows nobody agreed to delete. The consequence is real and is
+ * The repo-wide count is FOUR, re-measured against `master` at f7834e8 during
+ * the rewiring: `models/api-key-usage.ts:91` (billing's, above),
+ * `internal/providers/models/fallback-event.ts:46` (that file is DELETED as of
+ * the providers rewiring — read it at f7834e8) and `lib/auth-health.ts:53`
+ * (both here), and `models/notification.ts:84` — 90 days and PARTIAL on
+ * `status: 'dismissed'`, a predicate `ExpirySweepTarget` cannot express, which
+ * is why the collab domain registers it through a generated column instead.
+ *
+ * This paragraph previously read "five" and named a fifth index at
+ * `models/routing-log.ts:56`. No such file has ever existed in this repository
+ * — the only occurrence of that path anywhere was this sentence. The registry
+ * itself was unaffected (all four real indexes are registered, and the
+ * assertions are by content), so the error was confined to the prose; it is
+ * corrected rather than deleted because the count is the thing a future reader
+ * would check this comment for.
+ *
+ * `internal/providers/models/api-usage.ts` is deliberately ABSENT: it declared
+ * no TTL at all (that file is DELETED as of the providers rewiring — read it at
+ * f7834e8). It is easy to mistake for the billing domain's
+ * `api_key_usage`, which does have one, and giving it a 90-day retention on
+ * that resemblance would start deleting rows nobody agreed to delete. The
+ * consequence is real and is
  * recorded at the `api_usages` table: unbounded growth behind a one-day read
  * window, wanting a retention policy decided on purpose rather than inherited
  * by accident.

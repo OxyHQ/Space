@@ -3,7 +3,8 @@ import chatCompletionsRouter from './v1/chat-completions.js';
 import modelsRouter from './v1/models.js';
 import { authenticateTokenOrApiKey } from '../middleware/auth.js';
 import { apiKeyRateLimit } from '../middleware/api-key-rate-limit.js';
-import { UserCredits } from '../models/user-credits.js';
+import { getDb } from '../db/client.js';
+import { getOrCreateUserCredits, refreshCreditsIfNeeded } from '../repositories/userCredits.js';
 import { log } from '../lib/logger.js';
 
 const router = Router();
@@ -37,22 +38,16 @@ router.get('/me', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Get user credits
-    let userCredits = await UserCredits.findById(userId);
+    // Get user credits. The find-then-create pair collapses into one upsert,
+    // and the four `300`s it repeated now come from `DEFAULT_FREE_CREDITS` in
+    // the repository — one constant, so a new account here and a new account on
+    // any other path cannot receive different grants.
+    const db = getDb();
+    await getOrCreateUserCredits(db, userId);
+    const { row: userCredits } = await refreshCreditsIfNeeded(db, userId);
     if (!userCredits) {
-      userCredits = await UserCredits.create({
-        _id: userId,
-        credits: {
-          free: 300,
-          freeLimit: 300,
-          dailyRefresh: 300,
-          lastRefresh: new Date(),
-          paid: 0,
-        }
-      });
+      return res.status(500).json({ error: 'Failed to fetch user info' });
     }
-
-    await userCredits.refreshCreditsIfNeeded();
 
     const authUser = req.user;
     const rawDisplayName = authUser?.displayName;
@@ -63,9 +58,9 @@ router.get('/me', async (req: Request, res: Response) => {
       email: authUser?.email || '',
       name: displayName || authUser?.email || '',
       credits: {
-        free: userCredits.credits.free,
-        paid: userCredits.credits.paid,
-        total: userCredits.credits.free + userCredits.credits.paid,
+        free: userCredits.creditsFree,
+        paid: userCredits.creditsPaid,
+        total: userCredits.creditsFree + userCredits.creditsPaid,
       },
     });
   } catch (error: unknown) {

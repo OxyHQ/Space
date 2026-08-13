@@ -488,6 +488,74 @@ describe('the seeds', () => {
     expect((await plansRepo.findBySlug(db, planId))?.name).toBe('A');
   });
 
+  /**
+   * `seed-plans.ts` does NOT send a pure `$setOnInsert`: it carries
+   * `$set: { modelIds }` as well, under the comment "Always sync modelIds from
+   * seed (code-managed)". Every other column is admin-managed and written only
+   * on insert.
+   *
+   * Read as pure `$setOnInsert` — which is how it first ported — this becomes
+   * `ON CONFLICT DO NOTHING`, which passes the test above, passes every other
+   * assertion in this file, and silently ends the code-managed half of the
+   * seed's contract: a plan whose model list changed in the source would keep
+   * serving the old list forever, with no error and no log line. So the sync is
+   * asserted here, and the admin-managed columns are asserted UNCHANGED in the
+   * same case — those are the two halves that must not be collapsed into one
+   * `excluded`-based update.
+   */
+  it('a plan seed re-syncs modelIds on every run, and nothing else', async () => {
+    const planId = slug('seed-resync');
+
+    expect(
+      await plansRepo.seedPlan(db, {
+        planId,
+        name: 'A',
+        product: 'clarity',
+        monthlyPrice: 10,
+        modelIds: ['clarity-v1'],
+      }),
+    ).toBe(true);
+
+    // Second run: a different model list, and different values for the columns
+    // an operator is expected to have edited by hand.
+    expect(
+      await plansRepo.seedPlan(db, {
+        planId,
+        name: 'B',
+        product: 'clarity',
+        monthlyPrice: 999,
+        modelIds: ['clarity-v1', 'clarity-pro'],
+      }),
+    ).toBe(false);
+
+    const row = await plansRepo.findBySlug(db, planId);
+    expect(row?.modelIds).toEqual(['clarity-v1', 'clarity-pro']);
+    // The hand-editable columns survived.
+    expect(row?.name).toBe('A');
+    expect(row?.monthlyPrice).toBe(10);
+  });
+
+  /**
+   * The other half of the branch: a caller that supplies no `modelIds` has
+   * nothing to re-sync, and must not have the column reset to its default.
+   */
+  it('a plan seed with no modelIds leaves the stored list alone', async () => {
+    const planId = slug('seed-nomodels');
+
+    expect(
+      await plansRepo.seedPlan(db, {
+        planId,
+        name: 'A',
+        product: 'clarity',
+        modelIds: ['clarity-v1'],
+      }),
+    ).toBe(true);
+
+    expect(await plansRepo.seedPlan(db, { planId, name: 'B', product: 'clarity' })).toBe(false);
+
+    expect((await plansRepo.findBySlug(db, planId))?.modelIds).toEqual(['clarity-v1']);
+  });
+
   it('a feature seed and a package seed behave the same way', async () => {
     const featureId = slug('seed-feat');
     const packageId = slug('seed-pkg');

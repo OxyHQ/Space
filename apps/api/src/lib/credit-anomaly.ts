@@ -1,5 +1,6 @@
-import ApiKeyUsage from '../models/api-key-usage.js';
-import { UserCredits } from '../models/user-credits.js';
+import { getDb } from '../db/client.js';
+import { creditsSpentSince, dailyCreditUsageBetween } from '../repositories/apiKeyUsage.js';
+import { findUserCreditsById, type UserCreditsRow } from '../repositories/userCredits.js';
 
 export interface CreditWarning {
   level: 'warning' | 'critical';
@@ -24,11 +25,20 @@ setInterval(() => {
  * Calculate days remaining accounting for daily credit refresh.
  * If spending exceeds daily refresh, returns days until paid+free credits deplete.
  * If spending is within daily refresh and no paid credits, returns 999 (no risk).
+ *
+ * The parameter is typed `UserCreditsRow | null`, not the `any` it used to be,
+ * and that is the whole point of this function's port. It previously read
+ * `userCredits?.credits?.free || 0` — the `credits` sub-document is COLUMNS now,
+ * so those three reads would each be `undefined || 0` = 0 against a perfectly
+ * healthy row. Nothing would throw; every user would simply be told they have
+ * zero credits and 0 days remaining, and every one of them would get a critical
+ * warning. Typing the row makes that failure a compile error rather than a
+ * silent one.
  */
-function calculateDaysRemaining(todaySpend: number, userCredits: any): number {
-  const freeCredits = userCredits?.credits?.free || 0;
-  const paidCredits = userCredits?.credits?.paid || 0;
-  const dailyRefresh = userCredits?.credits?.dailyRefresh || 0;
+function calculateDaysRemaining(todaySpend: number, userCredits: UserCreditsRow | null): number {
+  const freeCredits = userCredits?.creditsFree || 0;
+  const paidCredits = userCredits?.creditsPaid || 0;
+  const dailyRefresh = userCredits?.creditsDailyRefresh || 0;
   const totalCredits = freeCredits + paidCredits;
 
   if (totalCredits <= 0) return 0;
@@ -52,6 +62,8 @@ export async function detectCreditAnomaly(userId: string): Promise<CreditWarning
     return cached.result;
   }
 
+  const db = getDb();
+
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
@@ -60,49 +72,17 @@ export async function detectCreditAnomaly(userId: string): Promise<CreditWarning
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   sevenDaysAgo.setHours(0, 0, 0, 0);
 
-  const creditSumExpr = {
-    $sum: {
-      $cond: {
-        if: { $gt: ['$creditsUsed', 0] },
-        then: '$creditsUsed',
-        else: { $max: [{ $ceil: { $divide: ['$tokensUsed', 1000] } }, 1] },
-      },
-    },
-  };
-
-  const [dailySpending, todayResult, userCredits] = await Promise.all([
+  const [dailySpending, todaySpend, userCredits] = await Promise.all([
     // Last 7 days (excluding today) grouped by day
-    ApiKeyUsage.aggregate([
-      {
-        $match: {
-          oxyUserId: userId,
-          timestamp: { $gte: sevenDaysAgo, $lt: todayStart },
-          $or: [{ creditsUsed: { $gt: 0 } }, { tokensUsed: { $gt: 0 } }],
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-          used: creditSumExpr,
-        },
-      },
-    ]),
-    // Today's spend
-    ApiKeyUsage.aggregate([
-      {
-        $match: {
-          oxyUserId: userId,
-          timestamp: { $gte: todayStart },
-          $or: [{ creditsUsed: { $gt: 0 } }, { tokensUsed: { $gt: 0 } }],
-        },
-      },
-      { $group: { _id: null, used: creditSumExpr } },
-    ]),
+    dailyCreditUsageBetween(db, userId, sevenDaysAgo, todayStart),
+    // Today's spend. The repository returns 0 for a user with no usage, where
+    // Mongo's `$group` produced no document at all and the caller wrote
+    // `todayResult[0]?.used || 0`. Both spell "no spend today".
+    creditsSpentSince(db, userId, todayStart),
     // Current credit balance
-    UserCredits.findById(userId),
+    findUserCreditsById(db, userId),
   ]);
 
-  const todaySpend = todayResult[0]?.used || 0;
   if (todaySpend === 0) {
     anomalyCache.set(userId, { result: null, expiresAt: Date.now() + ANOMALY_CACHE_TTL_MS });
     return null;
@@ -121,7 +101,7 @@ export async function detectCreditAnomaly(userId: string): Promise<CreditWarning
   }
 
   // Average over 7 calendar days (including zero-usage days) to avoid inflating the baseline
-  const totalHistorical = dailySpending.reduce((sum: number, d: any) => sum + d.used, 0);
+  const totalHistorical = dailySpending.reduce((sum, d) => sum + d.used, 0);
   const avgDailySpend = totalHistorical / 7;
 
   // Too low to detect meaningful anomalies

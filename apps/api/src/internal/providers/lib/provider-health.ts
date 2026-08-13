@@ -3,10 +3,26 @@
  *
  * Tracks provider reliability, implements circuit breaker pattern,
  * and automatically adjusts routing based on real-time health metrics.
+ *
+ * The circuit-breaker state machine and its thresholds live in
+ * `repositories/provider-healths.ts`, because every transition is now part of
+ * the statement that performs it. The read-modify-write this module used to do
+ * — fetch the document, mutate it in JavaScript, `save()` — lost one of two
+ * concurrent requests' counters and lost the whole update on a crash between
+ * the two round trips.
  */
 
-import { connectDB } from './db';
-import mongoose from 'mongoose';
+import { getDb } from '../../../db/client.js';
+import {
+  ensureExists,
+  listAll,
+  recordFailure as recordHealthFailure,
+  recordSuccess as recordHealthSuccess,
+  resetOne,
+  sweepOpenCircuits,
+  transitionToHalfOpen,
+  type ProviderHealthRow,
+} from '../../../repositories/provider-healths.js';
 import { log } from '../../../lib/logger.js';
 
 // ============== HEALTH METRICS ==============
@@ -26,46 +42,6 @@ export interface HealthMetrics {
   lastHealthCheck: Date;
   isHealthy: boolean;
 }
-
-// Circuit breaker configuration
-const CIRCUIT_CONFIG = {
-  failureThreshold: 5,              // Open circuit after 5 consecutive failures
-  successThreshold: 2,              // Close circuit after 2 consecutive successes in half-open
-  openDurationMs: 60000,            // Keep circuit open for 1 minute
-  halfOpenMaxAttempts: 3,           // Try 3 requests in half-open state
-  minRequestsForMetrics: 10,        // Need 10 requests before calculating success rate
-  unhealthySuccessRateThreshold: 50 // Consider unhealthy if success rate < 50%
-};
-
-// ============== MONGODB SCHEMA ==============
-
-const ProviderHealthSchema = new mongoose.Schema({
-  provider: { type: String, required: true, index: true },
-  modelId: { type: String, required: true, index: true },
-  successCount: { type: Number, default: 0 },
-  failureCount: { type: Number, default: 0 },
-  totalRequests: { type: Number, default: 0 },
-  successRate: { type: Number, default: 100 },
-  averageLatencyMs: { type: Number, default: 0 },
-  latencySamples: { type: [Number], default: [] }, // Last 100 samples
-  lastSuccess: { type: Date, default: null },
-  lastFailure: { type: Date, default: null },
-  consecutiveFailures: { type: Number, default: 0 },
-  consecutiveSuccesses: { type: Number, default: 0 },
-  circuitState: { type: String, enum: ['closed', 'open', 'half-open'], default: 'closed' },
-  circuitOpenedAt: { type: Date, default: null },
-  halfOpenAttempts: { type: Number, default: 0 },
-  lastHealthCheck: { type: Date, default: Date.now },
-  isHealthy: { type: Boolean, default: true },
-  updatedAt: { type: Date, default: Date.now }
-}, {
-  timestamps: true
-});
-
-// Compound index for unique provider+model combination
-ProviderHealthSchema.index({ provider: 1, modelId: 1 }, { unique: true });
-
-const ProviderHealth = (mongoose.models.ProviderHealth || mongoose.model('ProviderHealth', ProviderHealthSchema)) as mongoose.Model<any>;
 
 // ============== IN-MEMORY CACHE ==============
 
@@ -115,27 +91,10 @@ export async function getProviderHealth(provider: string, modelId: string): Prom
   }
 
   try {
-    await connectDB();
-    let health = await ProviderHealth.findOne({ provider, modelId });
-
-    if (!health) {
-      // Initialize new health record
-      health = await ProviderHealth.create({
-        provider,
-        modelId,
-        successCount: 0,
-        failureCount: 0,
-        totalRequests: 0,
-        successRate: 100,
-        averageLatencyMs: 0,
-        latencySamples: [],
-        consecutiveFailures: 0,
-        consecutiveSuccesses: 0,
-        circuitState: 'closed',
-        isHealthy: true,
-        lastHealthCheck: new Date()
-      });
-    }
+    // Find-or-initialise in one call. `ON CONFLICT DO NOTHING` then read back,
+    // so two requests racing to initialise the same provider/model do not turn
+    // into a unique violation the caller reads as a failure.
+    const health = await ensureExists(getDb(), provider, modelId);
 
     const metrics = healthToMetrics(health);
     setCachedHealth(provider, modelId, metrics);
@@ -170,65 +129,10 @@ export async function recordSuccess(
   latencyMs: number
 ): Promise<void> {
   try {
-    await connectDB();
-    const health = await ProviderHealth.findOne({ provider, modelId });
-
-    if (!health) {
-      // Create new record with success
-      await ProviderHealth.create({
-        provider,
-        modelId,
-        successCount: 1,
-        failureCount: 0,
-        totalRequests: 1,
-        successRate: 100,
-        averageLatencyMs: latencyMs,
-        latencySamples: [latencyMs],
-        lastSuccess: new Date(),
-        consecutiveFailures: 0,
-        consecutiveSuccesses: 1,
-        circuitState: 'closed',
-        isHealthy: true
-      });
-    } else {
-      // Update existing record
-      health.successCount++;
-      health.totalRequests++;
-      health.lastSuccess = new Date();
-      health.consecutiveFailures = 0;
-      health.consecutiveSuccesses++;
-
-      // Update latency (keep last 100 samples)
-      if (!health.latencySamples) health.latencySamples = [];
-      health.latencySamples.push(latencyMs);
-      if (health.latencySamples.length > 100) {
-        health.latencySamples = health.latencySamples.slice(-100);
-      }
-      health.averageLatencyMs = health.latencySamples.reduce((a, b) => a + b, 0) / health.latencySamples.length;
-
-      // Update success rate
-      health.successRate = (health.successCount / health.totalRequests) * 100;
-
-      // Circuit breaker logic
-      if (health.circuitState === 'half-open') {
-        health.halfOpenAttempts++;
-        if (health.consecutiveSuccesses >= CIRCUIT_CONFIG.successThreshold) {
-          // Close the circuit - provider is healthy again
-          health.circuitState = 'closed';
-          health.circuitOpenedAt = null;
-          health.halfOpenAttempts = 0;
-          health.isHealthy = true;
-        }
-      }
-
-      // Check overall health
-      if (health.totalRequests >= CIRCUIT_CONFIG.minRequestsForMetrics) {
-        health.isHealthy = health.successRate >= CIRCUIT_CONFIG.unhealthySuccessRateThreshold;
-      }
-
-      health.lastHealthCheck = new Date();
-      await health.save();
-    }
+    // One `INSERT ... ON CONFLICT DO UPDATE`, which also collapses the source's
+    // "does the row exist yet" branch: both branches wrote the same facts and
+    // differed only in whether they were expressed as increments.
+    await recordHealthSuccess(getDb(), provider, modelId, latencyMs);
 
     // Invalidate cache
     healthCache.delete(getCacheKey(provider, modelId));
@@ -245,68 +149,12 @@ export async function recordFailure(
   modelId: string,
   errorCode?: string
 ): Promise<void> {
-  // Rate limits are transient (provider works fine, just hit quota).
-  // They should NOT increment consecutiveFailures or open the circuit breaker.
-  const isRateLimit = errorCode != null && /rate.?limit|429|RESOURCE_EXHAUSTED|quota/i.test(errorCode);
-
   try {
-    await connectDB();
-    const health = await ProviderHealth.findOne({ provider, modelId });
-
-    if (!health) {
-      // Create new record with failure
-      await ProviderHealth.create({
-        provider,
-        modelId,
-        successCount: 0,
-        failureCount: 1,
-        totalRequests: 1,
-        successRate: 0,
-        lastFailure: new Date(),
-        consecutiveFailures: isRateLimit ? 0 : 1,
-        consecutiveSuccesses: 0,
-        circuitState: 'closed',
-        isHealthy: true // Still healthy after single failure
-      });
-    } else {
-      // Update existing record
-      health.failureCount++;
-      health.totalRequests++;
-      health.lastFailure = new Date();
-
-      if (!isRateLimit) {
-        // Only real failures (500s, timeouts, auth errors) affect circuit breaker
-        health.consecutiveFailures++;
-        health.consecutiveSuccesses = 0;
-      }
-
-      // Update success rate
-      health.successRate = (health.successCount / health.totalRequests) * 100;
-
-      // Circuit breaker logic
-      if (health.circuitState === 'closed') {
-        if (health.consecutiveFailures >= CIRCUIT_CONFIG.failureThreshold) {
-          // Open the circuit - stop sending requests
-          health.circuitState = 'open';
-          health.circuitOpenedAt = new Date();
-          health.isHealthy = false;
-        }
-      } else if (health.circuitState === 'half-open') {
-        // Failed in half-open state - re-open circuit
-        health.circuitState = 'open';
-        health.circuitOpenedAt = new Date();
-        health.halfOpenAttempts = 0;
-        health.isHealthy = false;
-      }
-
-      // Check overall health
-      if (health.totalRequests >= CIRCUIT_CONFIG.minRequestsForMetrics) {
-        health.isHealthy = health.successRate >= CIRCUIT_CONFIG.unhealthySuccessRateThreshold;
-      }
-
-      health.lastHealthCheck = new Date();
-      await health.save();
-    }
+    // Rate limits are transient (provider works fine, just hit quota) and must
+    // not increment consecutiveFailures or open the circuit — which is why the
+    // error code is passed through rather than a boolean. The classification
+    // happens in the repository, from the source's own regex.
+    await recordHealthFailure(getDb(), provider, modelId, errorCode);
 
     // Invalidate cache
     healthCache.delete(getCacheKey(provider, modelId));
@@ -326,28 +174,19 @@ export async function isProviderAvailable(provider: string, modelId: string): Pr
   }
 
   if (health.circuitState === 'open') {
-    // Check if we should transition to half-open
-    if (health.lastFailure) {
-      const timeSinceOpen = Date.now() - health.lastFailure.getTime();
-      if (timeSinceOpen >= CIRCUIT_CONFIG.openDurationMs) {
-        // Transition to half-open - try again
-        try {
-          await connectDB();
-          await ProviderHealth.updateOne(
-            { provider, modelId },
-            {
-              circuitState: 'half-open',
-              halfOpenAttempts: 0,
-              consecutiveSuccesses: 0
-            }
-          );
-          healthCache.delete(getCacheKey(provider, modelId));
-          return true;
-        } catch (error) {
-          log.providers.error({ err: error, provider, modelId }, 'Error transitioning to half-open');
-          return false;
-        }
+    // The cooldown check is part of the UPDATE's predicate rather than a
+    // decision taken here and written unconditionally: between the read and the
+    // write another request can already have re-opened the circuit, and the
+    // source would then re-admit traffic to a provider that just failed again.
+    try {
+      const transitioned = await transitionToHalfOpen(getDb(), provider, modelId);
+      if (transitioned) {
+        healthCache.delete(getCacheKey(provider, modelId));
+        return true;
       }
+    } catch (error) {
+      log.providers.error({ err: error, provider, modelId }, 'Error transitioning to half-open');
+      return false;
     }
     return false; // Circuit still open
   }
@@ -365,8 +204,7 @@ export async function isProviderAvailable(provider: string, modelId: string): Pr
  */
 export async function getAllProviderHealth(): Promise<HealthMetrics[]> {
   try {
-    await connectDB();
-    const healthRecords = await ProviderHealth.find({}).sort({ updatedAt: -1 });
+    const healthRecords = await listAll(getDb());
     return healthRecords.map(healthToMetrics);
   } catch (error) {
     log.providers.error({ err: error }, 'Error fetching all health metrics');
@@ -379,24 +217,7 @@ export async function getAllProviderHealth(): Promise<HealthMetrics[]> {
  */
 export async function resetProviderHealth(provider: string, modelId: string): Promise<void> {
   try {
-    await connectDB();
-    await ProviderHealth.findOneAndUpdate(
-      { provider, modelId },
-      {
-        successCount: 0,
-        failureCount: 0,
-        totalRequests: 0,
-        successRate: 100,
-        consecutiveFailures: 0,
-        consecutiveSuccesses: 0,
-        circuitState: 'closed',
-        circuitOpenedAt: null,
-        halfOpenAttempts: 0,
-        isHealthy: true,
-        lastHealthCheck: new Date()
-      },
-      { upsert: true }
-    );
+    await resetOne(getDb(), provider, modelId);
     healthCache.delete(getCacheKey(provider, modelId));
   } catch (error) {
     log.providers.error({ err: error }, 'Error resetting health');
@@ -405,7 +226,7 @@ export async function resetProviderHealth(provider: string, modelId: string): Pr
 
 // ============== HELPER FUNCTIONS ==============
 
-function healthToMetrics(health: any): HealthMetrics {
+function healthToMetrics(health: ProviderHealthRow): HealthMetrics {
   return {
     provider: health.provider,
     modelId: health.modelId,
@@ -417,7 +238,7 @@ function healthToMetrics(health: any): HealthMetrics {
     lastSuccess: health.lastSuccess,
     lastFailure: health.lastFailure,
     consecutiveFailures: health.consecutiveFailures,
-    circuitState: health.circuitState,
+    circuitState: health.circuitState as HealthMetrics['circuitState'],
     lastHealthCheck: health.lastHealthCheck,
     isHealthy: health.isHealthy
   };
@@ -433,24 +254,24 @@ export function startHealthCheckMonitor(): void {
 
   healthCheckInterval = setInterval(async () => {
     try {
-      await connectDB();
-      const healths = await ProviderHealth.find({ circuitState: { $in: ['open', 'half-open'] } });
-
-      for (const health of healths) {
-        // Auto-transition open circuits to half-open after cooldown
-        if (health.circuitState === 'open' && health.circuitOpenedAt) {
-          const timeSinceOpen = Date.now() - health.circuitOpenedAt.getTime();
-          if (timeSinceOpen >= CIRCUIT_CONFIG.openDurationMs) {
-            health.circuitState = 'half-open';
-            health.halfOpenAttempts = 0;
-            await health.save();
-          }
-        }
+      // The source fetched every open and half-open circuit and saved each one
+      // whose cooldown had elapsed. The fetch existed only to evaluate a
+      // predicate the database can evaluate, and iterating row by row meant a
+      // circuit could be re-opened by a concurrent failure between the read and
+      // its own save. One statement.
+      const swept = await sweepOpenCircuits(getDb());
+      if (swept > 0) {
+        // The cached metrics for those rows now name a state that has moved on.
+        clearHealthCache();
       }
     } catch (error) {
       log.providers.error({ err: error }, 'Error in health check monitor');
     }
   }, 5 * 60 * 1000); // Every 5 minutes
+
+  // A module-level interval must not hold the process open — an unref'd handle
+  // is what keeps a test runner from hanging on it.
+  healthCheckInterval.unref?.();
 }
 
 export function stopHealthCheckMonitor(): void {

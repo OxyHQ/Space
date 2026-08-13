@@ -1,19 +1,22 @@
 /**
- * Seed ModelConfig collection from TIER_MODEL_MAPPINGS
+ * Seed the `model_configs` table from TIER_MODEL_MAPPINGS
  *
- * Populates the ModelConfig MongoDB collection with all provider models
- * from the hardcoded tier mappings. Uses upsert for idempotency.
- * Also resets any open circuit breakers on startup.
+ * Populates it with all provider models from the hardcoded tier mappings.
+ * Uses upsert for idempotency. Also resets any open circuit breakers on startup.
  */
 
-import { ModelConfig } from '../models/model-config.js';
-import { ClarityModel } from '../models/clarity-model.js';
-import { ProviderKey } from '../models/provider-key.js';
+import { getDb } from '../../../db/client.js';
+import { findByProviderModel, seedModel } from '../../../repositories/model-configs.js';
+import {
+  patchModel as patchClarityModel,
+  replaceProviderMappings,
+  seedModel as seedClarityModel,
+  type ProviderMappingInput,
+} from '../../../repositories/clarity-models.js';
+import { resetOpenCircuits } from '../../../repositories/provider-healths.js';
+import { resetCooldowns } from '../../../repositories/provider-keys.js';
 import { TIER_MODEL_MAPPINGS, CLARITY_MODELS, type ModelCapabilities } from './clarity-models.js';
-import { connectDB } from './db.js';
-import mongoose from 'mongoose';
 import { log } from '../../../lib/logger.js';
-import { isDuplicateKeyError } from '../../../lib/errors/index.js';
 
 // Human-readable display names for common models
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
@@ -46,7 +49,7 @@ function getDisplayName(provider: string, modelId: string): string {
 }
 
 export async function seedModelConfigs(): Promise<{ seeded: number; skipped: number }> {
-  await connectDB();
+  const db = getDb();
 
   let seeded = 0;
   let skipped = 0;
@@ -72,47 +75,55 @@ export async function seedModelConfigs(): Promise<{ seeded: number; skipped: num
       const capabilities: Partial<ModelCapabilities> = mapping.capabilities || {};
 
       try {
-        const result = await ModelConfig.updateOne(
-          { provider: mapping.provider, modelId: mapping.modelId },
+        // The capability/limit/pricing block is written ONLY on insert and the
+        // tier ranking on EVERY run, so re-running updates priorities without
+        // clobbering pricing an operator has since corrected by hand. Both
+        // halves stay separate; one `onConflictDoUpdate` over all of them would
+        // silently revert those corrections on the next boot.
+        //
+        // The source also wrapped this in a duplicate-key catch, for "same
+        // model in multiple tiers". `ON CONFLICT DO UPDATE` makes that case an
+        // ordinary update, and on Postgres the catch could not have told a
+        // duplicate from a dropped connection anyway — nor recovered, since one
+        // failed statement aborts the whole transaction.
+        const { inserted } = await seedModel(
+          db,
           {
-            $setOnInsert: {
-              displayName: getDisplayName(mapping.provider, mapping.modelId),
-              capabilities: {
-                vision: capabilities.vision || false,
-                audio: capabilities.audio || false,
-                codeExecution: capabilities.codeExecution || false,
-                webSearch: capabilities.webSearch || false,
-                computerUse: capabilities.computerUse || false,
-                thinking: false,
-                streaming: capabilities.streaming !== false,
-                functionCalling: capabilities.functionCalling !== false,
-                jsonMode: false,
-                promptCaching: capabilities.promptCaching || false,
-              },
-              limits: {
-                maxContextTokens: capabilities.maxContextTokens || 8192,
-                maxOutputTokens: capabilities.maxOutputTokens || 4096,
-              },
-              pricing: {
-                tier: mapping.pricingTier || 'freemium',
-                costPer1MInput: mapping.costPer1MInput || 0,
-                costPer1MOutput: mapping.costPer1MOutput || 0,
-                averageLatencyMs: mapping.averageLatencyMs || 1500,
-              },
-              isActive: true,
-              isDeprecated: false,
-            },
-            $set: {
-              // Always update tier mapping info (allows re-running to update priorities)
-              clarityTier: tier,
-              priority: mapping.priority,
-              qualityScore: mapping.qualityScore,
-            },
+            provider: mapping.provider,
+            modelId: mapping.modelId,
+            displayName: getDisplayName(mapping.provider, mapping.modelId),
+            capVision: capabilities.vision || false,
+            capAudio: capabilities.audio || false,
+            capCodeExecution: capabilities.codeExecution || false,
+            capWebSearch: capabilities.webSearch || false,
+            capComputerUse: capabilities.computerUse || false,
+            capThinking: false,
+            capStreaming: capabilities.streaming !== false,
+            capFunctionCalling: capabilities.functionCalling !== false,
+            capJsonMode: false,
+            capPromptCaching: capabilities.promptCaching || false,
+            limitMaxContextTokens: capabilities.maxContextTokens || 8192,
+            limitMaxOutputTokens: capabilities.maxOutputTokens || 4096,
+            pricingTier: mapping.pricingTier || 'freemium',
+            pricingCostPer1MInput: mapping.costPer1MInput || 0,
+            pricingCostPer1MOutput: mapping.costPer1MOutput || 0,
+            pricingAverageLatencyMs: mapping.averageLatencyMs || 1500,
+            isActive: true,
+            isDeprecated: false,
+            // Present in the insert too, so a first insert lands the ranking.
+            clarityTier: tier,
+            priority: mapping.priority,
+            qualityScore: mapping.qualityScore,
           },
-          { upsert: true }
+          {
+            // Always update tier mapping info (allows re-running to update priorities)
+            clarityTier: tier,
+            priority: mapping.priority,
+            qualityScore: mapping.qualityScore,
+          },
         );
 
-        if (result.upsertedCount > 0) {
+        if (inserted) {
           seeded++;
           if (!seen.has(uniqueKey)) {
             log.seed.info({ provider: mapping.provider, modelId: mapping.modelId, tier }, 'Created ModelConfig');
@@ -125,12 +136,7 @@ export async function seedModelConfigs(): Promise<{ seeded: number; skipped: num
 
         seen.add(uniqueKey);
       } catch (error: unknown) {
-        // Handle duplicate key errors gracefully (same model in multiple tiers)
-        if (isDuplicateKeyError(error)) {
-          skipped++;
-        } else {
-          log.seed.error({ err: error, uniqueKey }, 'Error seeding ModelConfig');
-        }
+        log.seed.error({ err: error, uniqueKey }, 'Error seeding ModelConfig');
       }
     }
   }
@@ -140,14 +146,16 @@ export async function seedModelConfigs(): Promise<{ seeded: number; skipped: num
 }
 
 /**
- * Seed ClarityModel collection from CLARITY_MODELS and TIER_MODEL_MAPPINGS
+ * Seed the `clarity_models` table from CLARITY_MODELS and TIER_MODEL_MAPPINGS
  *
- * Creates virtual Clarity models (clarity-v1, clarity-fast, etc.) in MongoDB
- * with their provider mappings linked to ModelConfig documents.
- * Must run AFTER seedModelConfigs() so ModelConfig references exist.
+ * Creates virtual Clarity models (clarity-v1, clarity-fast, etc.) with their
+ * provider mappings linked to `model_configs` rows.
+ * Must run AFTER seedModelConfigs() so those references exist — and now that
+ * `clarity_model_provider_mappings.model_config_id` is a real foreign key, the
+ * ordering is enforced rather than merely intended.
  */
 export async function seedClarityModels(): Promise<{ seeded: number; skipped: number }> {
-  await connectDB();
+  const db = getDb();
 
   let seeded = 0;
   let skipped = 0;
@@ -162,19 +170,16 @@ export async function seedClarityModels(): Promise<{ seeded: number; skipped: nu
       // Get tier mappings for this model's tier
       const tierMappings = TIER_MODEL_MAPPINGS[clarityModel.tier] || [];
 
-      // Build provider mappings with ModelConfig references
-      const providerMappings = [];
+      // Build provider mappings with model_configs references
+      const providerMappings: ProviderMappingInput[] = [];
       for (const mapping of tierMappings) {
         if (!validProviders.includes(mapping.provider)) continue;
 
-        const modelConfig = await ModelConfig.findOne({
-          provider: mapping.provider,
-          modelId: mapping.modelId,
-        });
+        const modelConfig = await findByProviderModel(db, mapping.provider, mapping.modelId);
 
         if (modelConfig) {
           providerMappings.push({
-            modelConfigId: modelConfig._id,
+            modelConfigId: modelConfig.id,
             provider: mapping.provider,
             modelId: mapping.modelId,
             priority: mapping.priority,
@@ -190,44 +195,49 @@ export async function seedClarityModels(): Promise<{ seeded: number; skipped: nu
       const hasCodeExecution = tierMappings.some(m => m.capabilities?.codeExecution);
       const hasWebSearch = tierMappings.some(m => m.capabilities?.webSearch);
 
-      const result = await ClarityModel.updateOne(
-        { clarityModelId: modelId },
-        {
-          $setOnInsert: {
-            displayName: clarityModel.name,
-            tier: clarityModel.tier,
-            description: clarityModel.description,
-            creditMultiplier: clarityModel.creditMultiplier,
-            isFreeTier: clarityModel.creditMultiplier <= 1.0,
-            isActive: true,
-            isDeprecated: false,
-          },
-          $set: {
-            providerMappings,
-            aggregatedCapabilities: {
-              vision: hasVision,
-              audio: hasAudio,
-              codeExecution: hasCodeExecution,
-              webSearch: hasWebSearch,
-              thinking: false,
-            },
-          },
-        },
-        { upsert: true }
-      );
+      // One atomic Mongo upsert becomes three statements over two tables, so
+      // they share a transaction. `replaceProviderMappings` is a DELETE
+      // followed by an INSERT and the gap between them is a real state in
+      // which the Clarity model has NO providers — it takes the parent row's
+      // lock for that reason, because a transaction gives atomicity and not
+      // the SERIALIZATION the single document used to give.
+      const inserted = await db.transaction(async (tx) => {
+        // Insert-only for the admin-managed columns.
+        const seed = await seedClarityModel(tx, {
+          clarityModelId: modelId,
+          displayName: clarityModel.name,
+          tier: clarityModel.tier,
+          description: clarityModel.description,
+          creditMultiplier: clarityModel.creditMultiplier,
+          isFreeTier: clarityModel.creditMultiplier <= 1.0,
+          isActive: true,
+          isDeprecated: false,
+        });
 
-      if (result.upsertedCount > 0) {
+        // `aggregatedCapabilities` was in the source's `$set`, so it is
+        // re-derived from the tier mappings on every run — flattened into the
+        // five `cap*` columns.
+        await patchClarityModel(tx, modelId, {
+          capVision: hasVision,
+          capAudio: hasAudio,
+          capCodeExecution: hasCodeExecution,
+          capWebSearch: hasWebSearch,
+          capThinking: false,
+        });
+
+        await replaceProviderMappings(tx, seed.id, providerMappings);
+
+        return seed.inserted;
+      });
+
+      if (inserted) {
         seeded++;
         log.seed.info({ modelId, tier: clarityModel.tier, providers: providerMappings.length }, 'Created ClarityModel');
       } else {
         skipped++;
       }
     } catch (error: unknown) {
-      if (isDuplicateKeyError(error)) {
-        skipped++;
-      } else {
-        log.seed.error({ err: error, modelId }, 'Error seeding ClarityModel');
-      }
+      log.seed.error({ err: error, modelId }, 'Error seeding ClarityModel');
     }
   }
 
@@ -239,34 +249,23 @@ export async function seedClarityModels(): Promise<{ seeded: number; skipped: nu
  * Reset all open circuit breakers to closed state
  */
 export async function resetAllCircuitBreakers(): Promise<number> {
-  await connectDB();
+  // The source reached the model by BARE NAME STRING
+  // (`mongoose.models.ProviderHealth`) and returned 0 when the registry had no
+  // entry — logging "skipping" and reporting the same number as a genuinely
+  // empty run. Against a table that guard has no meaning and is gone rather
+  // than translated: "the model was not loaded" and "there was nothing to
+  // reset" must not stay the same silent outcome.
+  //
+  // Every matched row changes at least one field (the predicate selects
+  // non-closed circuits and the update closes them), so Postgres's row count
+  // and Mongo's `modifiedCount` agree.
+  const count = await resetOpenCircuits(getDb());
 
-  const ProviderHealth = mongoose.models.ProviderHealth as mongoose.Model<any> | undefined;
-  if (!ProviderHealth) {
-    log.seed.info('ProviderHealth model not loaded yet, skipping circuit breaker reset');
-    return 0;
+  if (count > 0) {
+    log.seed.info({ count }, 'Reset open circuit breakers to closed');
   }
 
-  const result = await ProviderHealth.updateMany(
-    { circuitState: { $in: ['open', 'half-open'] } },
-    {
-      $set: {
-        circuitState: 'closed',
-        circuitOpenedAt: null,
-        halfOpenAttempts: 0,
-        consecutiveFailures: 0,
-        consecutiveSuccesses: 0,
-        isHealthy: true,
-        lastHealthCheck: new Date(),
-      },
-    }
-  );
-
-  if (result.modifiedCount > 0) {
-    log.seed.info({ count: result.modifiedCount }, 'Reset open circuit breakers to closed');
-  }
-
-  return result.modifiedCount;
+  return count;
 }
 
 /**
@@ -274,18 +273,16 @@ export async function resetAllCircuitBreakers(): Promise<number> {
  * Prevents stale lockouts from persisting across deploys.
  */
 export async function resetAllKeyCooldowns(): Promise<number> {
-  await connectDB();
+  // The predicate selects rows with a non-null cooldown OR a positive failure
+  // count and the update clears both, so every matched row changes and
+  // Postgres's row count means what Mongo's `modifiedCount` meant.
+  const count = await resetCooldowns(getDb());
 
-  const result = await ProviderKey.updateMany(
-    { $or: [{ cooldownUntil: { $ne: null } }, { consecutiveFailures: { $gt: 0 } }] },
-    { $set: { cooldownUntil: null, consecutiveFailures: 0 } }
-  );
-
-  if (result.modifiedCount > 0) {
-    log.seed.info({ count: result.modifiedCount }, 'Reset key cooldowns and failure counters');
+  if (count > 0) {
+    log.seed.info({ count }, 'Reset key cooldowns and failure counters');
   }
 
-  return result.modifiedCount;
+  return count;
 }
 
 /**

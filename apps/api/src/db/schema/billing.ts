@@ -41,9 +41,21 @@ import { createdAt, generatedId, inList, textArrayLiteral, timestamptz, updatedA
  * "days of credit remaining" figure that would read 0 and warn every user
  * that they are out of money.
  *
- * EVERY reader of the document shape, as of this commit. A rewiring PR must
- * touch all of them; none of them imports this model, so no import census
- * finds them:
+ * DONE — every reader below was rewired onto `repositories/userCredits.ts`, and
+ * `models/user-credits.ts` is deleted. The list is kept because it is the only
+ * record of what had to be found, and because the NEXT reader's question is not
+ * "which of these is left" but "how would I find them again". Line numbers are
+ * pre-port, at `master` f7834e8.
+ *
+ * Re-verified after the rewiring by grepping this branch for each shape —
+ * `.addCredits(` / `.refreshCreditsIfNeeded(` / `.deductCredits(`,
+ * `.credits.<field>`, `?.credits?.`, `userCredits._id`, `userCredits.save()`,
+ * `UserCredits.<verb>` — which finds ZERO live call sites and 15 comment
+ * references. The zero is load-bearing, so it carries a positive control: a
+ * synthetic file exercising all six shapes moved every counter off zero and was
+ * then removed, which is what distinguishes "there are none" from "the grep is
+ * broken".
+ *
  *   - routes/credits.ts:18-23        free, paid, freeLimit, dailyRefresh, lastRefresh
  *   - routes/v1.ts:66-68             free, paid
  *   - lib/credits-manager.ts:124     free, paid   (log line)
@@ -55,7 +67,7 @@ import { createdAt, generatedId, inList, textArrayLiteral, timestamptz, updatedA
  *   - routes/billing.ts:64-65        stripeCustomerId, then `.save()`
  *   - routes/billing.ts:670-672      stripeCustomerId, then `.save()`
  *   - routes/billing.ts:698,719,740  `userCredits._id` used as the oxy user id
- * and the instance methods, whose call sites are equally invisible:
+ * and the instance methods, whose call sites were equally invisible:
  *   - routes/billing.ts:627,729      `.addCredits(n, 'paid')`
  *   - routes/v1.ts:55                `.refreshCreditsIfNeeded()`
  *   - routes/credits.ts:15           `.refreshCreditsIfNeeded()`

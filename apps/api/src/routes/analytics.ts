@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import mongoose from 'mongoose';
 import { authenticateToken } from '../middleware/auth.js';
-import { ChatAnalytics } from '../lib/hooks/built-in/analytics-hook.js';
+import { getDb } from '../db/client.js';
+import { creditsByDay, modelBreakdown, usageByDay } from '../repositories/chatAnalytics.js';
 import { getClarityModel } from '../lib/gateway-client.js';
 import { log } from '../lib/logger.js';
 
@@ -15,18 +15,7 @@ router.get('/usage', async (req: Request, res: Response) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const usage = await ChatAnalytics.aggregate([
-      { $match: { oxyUserId: new mongoose.Types.ObjectId(req.user!.id), createdAt: { $gte: startDate } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          conversations: { $sum: 1 },
-          totalTokens: { $sum: '$totalTokens' },
-          avgLatency: { $avg: '$latencyMs' },
-        }
-      },
-      { $sort: { _id: 1 } },
-    ]);
+        const usage = await usageByDay(getDb(), req.user!.id, startDate);
 
     res.json({ usage, period: days });
   } catch (error: unknown) {
@@ -42,21 +31,10 @@ router.get('/models', async (req: Request, res: Response) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const raw = await ChatAnalytics.aggregate([
-      { $match: { oxyUserId: new mongoose.Types.ObjectId(req.user!.id), createdAt: { $gte: startDate } } },
-      {
-        $group: {
-          _id: { $ifNull: ['$clarityModelId', '$model'] },
-          count: { $sum: 1 },
-          totalTokens: { $sum: '$totalTokens' },
-          avgLatency: { $avg: '$latencyMs' },
-        }
-      },
-      { $sort: { count: -1 } },
-    ]);
+        const raw = await modelBreakdown(getDb(), req.user!.id, startDate);
 
     const models = (await Promise.all(raw.map(async (m) => {
-      const clarityModel = await getClarityModel(m._id);
+      const clarityModel = await getClarityModel(m.modelId);
       if (!clarityModel) return null;
       return {
         ...m,
@@ -79,17 +57,7 @@ router.get('/credits', async (req: Request, res: Response) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const credits = await ChatAnalytics.aggregate([
-      { $match: { oxyUserId: new mongoose.Types.ObjectId(req.user!.id), createdAt: { $gte: startDate } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          totalTokens: { $sum: '$totalTokens' },
-          conversations: { $sum: 1 },
-        }
-      },
-      { $sort: { _id: 1 } },
-    ]);
+        const credits = await creditsByDay(getDb(), req.user!.id, startDate);
 
     res.json({ credits, period: days });
   } catch (error: unknown) {

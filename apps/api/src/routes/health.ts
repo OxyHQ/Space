@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import mongoose from 'mongoose';
+import { sql } from 'drizzle-orm';
+import { getDb } from '../db/client.js';
 import { getAllProviderHealth, type HealthMetrics } from '../lib/gateway-client.js';
 import { getRedisClient } from '../lib/redis.js';
 import { log } from '../lib/logger.js';
@@ -17,11 +18,16 @@ async function getHealthSnapshot() {
     return healthCache.data;
   }
 
-  const mongoState = mongoose.connection.readyState;
-  const mongoStatus = mongoState === 1 ? 'connected'
-    : mongoState === 2 ? 'connecting'
-    : mongoState === 3 ? 'disconnecting'
-    : 'disconnected';
+  // A real query, not a connection flag. `mongoose.connection.readyState` said
+  // "connected" without proving the server would answer anything; a readiness
+  // probe that cannot fail while the database is unusable is not a probe.
+  let databaseStatus: 'connected' | 'disconnected' = 'disconnected';
+  try {
+    await getDb().execute(sql`select 1`);
+    databaseStatus = 'connected';
+  } catch (error) {
+    log.general.warn({ err: error }, 'Readiness: database query failed');
+  }
 
   let providersSummary = { total: 0, healthy: 0, unhealthy: 0, openCircuits: 0 };
   let providersReachable = false;
@@ -43,13 +49,13 @@ async function getHealthSnapshot() {
   const redisStatus = redis ? 'connected' : 'unavailable';
 
   // Only require healthy providers if we could actually reach the gateway
-  const isHealthy = mongoState === 1 && (!providersReachable || providersSummary.healthy > 0);
+  const isHealthy = databaseStatus === 'connected' && (!providersReachable || providersSummary.healthy > 0);
 
   const snapshot = {
     status: isHealthy ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
-    mongodb: mongoStatus,
+    postgres: databaseStatus,
     redis: redisStatus,
     providers: providersSummary,
     memory: {
@@ -85,12 +91,21 @@ router.get('/live', (_req, res) => {
   res.status(200).json({ status: 'alive' });
 });
 
-// Readiness probe: MongoDB connected + at least 1 provider healthy
-// Used by load balancers to decide if this instance should receive traffic
+// Readiness probe: the database answers a query + at least 1 provider healthy.
+// Used by load balancers to decide if this instance should receive traffic.
 router.get('/ready', async (_req, res) => {
-  const mongoReady = mongoose.connection.readyState === 1;
+  // Asserted with a statement rather than a connection flag: a pool can report
+  // itself connected while every query fails, and this endpoint decides
+  // whether traffic arrives.
+  let databaseReady = false;
+  try {
+    await getDb().execute(sql`select 1`);
+    databaseReady = true;
+  } catch (error) {
+    log.general.warn({ err: error }, 'Readiness: database query failed');
+  }
 
-  if (!mongoReady) {
+  if (!databaseReady) {
     return res.status(503).json({ status: 'not_ready', reason: 'database_unavailable' });
   }
 
@@ -101,7 +116,7 @@ router.get('/ready', async (_req, res) => {
       return res.status(503).json({ status: 'not_ready', reason: 'no_healthy_providers' });
     }
   } catch {
-    // If we can't check providers, still consider ready if MongoDB is up
+    // If we can't check providers, still consider ready if the database is up
   }
 
   res.status(200).json({ status: 'ready' });

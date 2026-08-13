@@ -4,12 +4,31 @@
  */
 
 import express, { Request, Response } from 'express';
-import { Transaction } from '../../../models/transaction.js';
-import { Subscription } from '../../../models/subscription.js';
-import { UserCredits } from '../../../models/user-credits.js';
+import { getDb } from '../../../db/client.js';
+import {
+  countTransactions,
+  listRecentTransactionsByUser,
+  listTransactions,
+} from '../../../repositories/transactions.js';
+import {
+  countSubscriptions,
+  listSubscriptions,
+  listSubscriptionsByUser,
+} from '../../../repositories/subscriptions.js';
+import { findUserCreditsById } from '../../../repositories/userCredits.js';
 import { log } from '../../../lib/logger.js';
 
 const router = express.Router();
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+function parsePaging(limitStr: unknown, offsetStr: unknown): { limit: number; offset: number } {
+  return {
+    limit: Math.min(parseInt(limitStr as string) || DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE),
+    offset: parseInt(offsetStr as string) || 0,
+  };
+}
 
 /**
  * GET /v1/billing/transactions
@@ -19,16 +38,18 @@ router.get('/transactions', async (req: Request, res: Response) => {
   try {
     const { status, type, limit: limitStr, offset: offsetStr } = req.query;
 
-    const query: any = {};
-    if (status && typeof status === 'string') query.status = status;
-    if (type && typeof type === 'string') query.type = type;
-
-    const limit = Math.min(parseInt(limitStr as string) || 50, 200);
-    const offset = parseInt(offsetStr as string) || 0;
+    // An absent key means "no restriction" and must DROP the clause, not
+    // compare against NULL — see `transactionFilter`.
+    const filter = {
+      ...(typeof status === 'string' ? { status } : {}),
+      ...(typeof type === 'string' ? { type } : {}),
+    };
+    const { limit, offset } = parsePaging(limitStr, offsetStr);
+    const db = getDb();
 
     const [transactions, total] = await Promise.all([
-      Transaction.find(query).sort({ createdAt: -1 }).skip(offset).limit(limit).lean(),
-      Transaction.countDocuments(query),
+      listTransactions(db, filter, { limit, offset }),
+      countTransactions(db, filter),
     ]);
 
     res.json({
@@ -55,16 +76,16 @@ router.get('/subscriptions', async (req: Request, res: Response) => {
   try {
     const { status, product, limit: limitStr, offset: offsetStr } = req.query;
 
-    const query: any = {};
-    if (status && typeof status === 'string') query.status = status;
-    if (product && typeof product === 'string') query['plan.product'] = product;
-
-    const limit = Math.min(parseInt(limitStr as string) || 50, 200);
-    const offset = parseInt(offsetStr as string) || 0;
+    const filter = {
+      ...(typeof status === 'string' ? { status } : {}),
+      ...(typeof product === 'string' ? { product } : {}),
+    };
+    const { limit, offset } = parsePaging(limitStr, offsetStr);
+    const db = getDb();
 
     const [subscriptions, total] = await Promise.all([
-      Subscription.find(query).sort({ createdAt: -1 }).skip(offset).limit(limit).lean(),
-      Subscription.countDocuments(query),
+      listSubscriptions(db, filter, { limit, offset }),
+      countSubscriptions(db, filter),
     ]);
 
     res.json({
@@ -89,12 +110,24 @@ router.get('/subscriptions', async (req: Request, res: Response) => {
  */
 router.get('/user/:userId', async (req: Request, res: Response) => {
   try {
+    // Express types a route param as `string | string[]`. Mongoose accepted
+    // either and cast; a repository takes a `string`, so the shape is checked
+    // here rather than being asserted away.
     const { userId } = req.params;
+    if (typeof userId !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid user id',
+        code: 'INVALID_USER_ID',
+      });
+      return;
+    }
+    const db = getDb();
 
     const [credits, subscriptions, transactions] = await Promise.all([
-      UserCredits.findById(userId).lean(),
-      Subscription.find({ oxyUserId: userId }).sort({ createdAt: -1 }).lean(),
-      Transaction.find({ oxyUserId: userId }).sort({ createdAt: -1 }).limit(50).lean(),
+      findUserCreditsById(db, userId),
+      listSubscriptionsByUser(db, userId),
+      listRecentTransactionsByUser(db, userId),
     ]);
 
     res.json({

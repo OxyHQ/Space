@@ -1,15 +1,15 @@
 /**
- * Seed Plan collection with default subscription plans.
- * Uses $setOnInsert for idempotency — re-running never overwrites admin edits.
+ * Seed the `plans` table with default subscription plans.
+ * Insert-only for the admin-managed columns — re-running never overwrites admin
+ * edits — except `modelIds`, which the seed owns and re-syncs on every run.
  *
- * Features are now managed via the Feature + PlanFeature collections
+ * Features are managed via the `features` + `plan_features` tables
  * (see seed-features.ts). This file only seeds plan metadata and modelIds.
  */
 
-import { Plan } from '../models/plan.js';
-import { connectDB } from './db.js';
+import { getDb } from '../../../db/client.js';
+import { seedPlan } from '../../../repositories/plans.js';
 import { log } from '../../../lib/logger.js';
-import { isDuplicateKeyError } from '../../../lib/errors/index.js';
 
 interface PlanSeed {
   planId: string;
@@ -155,52 +155,48 @@ const SEED_PLANS: PlanSeed[] = [
 ];
 
 export async function seedPlans(): Promise<{ seeded: number; skipped: number }> {
-  await connectDB();
+  const db = getDb();
 
   let seeded = 0;
   let skipped = 0;
 
   for (const planData of SEED_PLANS) {
     try {
-      const result = await Plan.updateOne(
-        { planId: planData.planId },
-        {
-          // Always sync modelIds from seed (code-managed)
-          $set: {
-            modelIds: planData.modelIds,
-          },
-          // Only set other fields on first insert (admin-managed)
-          $setOnInsert: {
-            name: planData.name,
-            product: planData.product,
-            creditsPerMonth: planData.creditsPerMonth,
-            dailyFreeCredits: planData.dailyFreeCredits,
-            monthlyPrice: planData.monthlyPrice,
-            annualPrice: planData.annualPrice,
-            currency: planData.currency,
-            subtitle: planData.subtitle,
-            creditsLabel: planData.creditsLabel,
-            isFeatured: planData.isFeatured,
-            sortOrder: planData.sortOrder,
-            isFree: planData.isFree,
-            isActive: true,
-          },
-        },
-        { upsert: true }
-      );
+      // `modelIds` is code-managed and re-synced on every run; every other
+      // column is admin-managed and written only on insert. `seedPlan` is an
+      // `ON CONFLICT DO UPDATE` over that one column for exactly that reason —
+      // a plain `DO NOTHING` would read correctly and quietly stop syncing it.
+      //
+      // No duplicate-key catch: on Postgres an exception cannot tell a
+      // duplicate from a dropped connection, so catching one would answer
+      // "already seeded" to an infrastructure failure. `RETURNING (xmax = 0)`
+      // makes the answer part of the statement's result instead.
+      const inserted = await seedPlan(db, {
+        planId: planData.planId,
+        name: planData.name,
+        product: planData.product,
+        creditsPerMonth: planData.creditsPerMonth,
+        dailyFreeCredits: planData.dailyFreeCredits,
+        monthlyPrice: planData.monthlyPrice,
+        annualPrice: planData.annualPrice,
+        currency: planData.currency,
+        subtitle: planData.subtitle,
+        creditsLabel: planData.creditsLabel,
+        isFeatured: planData.isFeatured,
+        sortOrder: planData.sortOrder,
+        isFree: planData.isFree,
+        modelIds: planData.modelIds,
+        isActive: true,
+      });
 
-      if (result.upsertedCount > 0) {
+      if (inserted) {
         seeded++;
         log.seed.info({ planId: planData.planId, name: planData.name }, 'Created Plan');
       } else {
         skipped++;
       }
     } catch (error: unknown) {
-      if (isDuplicateKeyError(error)) {
-        skipped++;
-      } else {
-        log.seed.error({ err: error, planId: planData.planId }, 'Error seeding plan');
-      }
+      log.seed.error({ err: error, planId: planData.planId }, 'Error seeding plan');
     }
   }
 

@@ -11,8 +11,8 @@ import {
 } from '@oxyhq/core/server';
 import { log } from '../lib/logger.js';
 import { getClientIp } from '../lib/net-utils.js';
-import type { WorkspaceDoc } from '../models/workspace.js';
-import type { WorkspaceMemberDoc, WorkspaceRole } from '../models/workspace-member.js';
+import type { WorkspaceRole } from '../db/schema/workspaces.js';
+import type { WorkspaceMemberRow, WorkspaceRow } from '../repositories/workspaces.js';
 
 // Initialize Oxy client
 const OXY_API_URL = process.env.OXY_API_URL || 'https://api.oxy.so';
@@ -46,12 +46,12 @@ declare global {
        * Set by `requireWorkspaceMember` (Phase 2 workspaces). When present,
        * the request was made by a verified member of this workspace.
        */
-      workspaceDoc?: WorkspaceDoc;
+      workspaceDoc?: WorkspaceRow;
       /**
        * Set by `requireWorkspaceMember`. The membership row for `req.user`
        * within `req.workspaceDoc`, including the caller's role.
        */
-      member?: WorkspaceMemberDoc;
+      member?: WorkspaceMemberRow;
       /**
        * Legacy field set by `resolveWorkspace` (header passthrough). Now
        * carries the full role union used by the new permissions model.

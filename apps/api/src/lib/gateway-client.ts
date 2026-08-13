@@ -5,12 +5,16 @@
  * local providers implementation so existing imports keep working.
  */
 
+import { getDb } from '../db/client.js';
+import { listPackages } from '../repositories/credit-packages.js';
+import { listFeatures } from '../repositories/features.js';
+import { listMappings } from '../repositories/plan-features.js';
+import { listPlans, patchPlan } from '../repositories/plans.js';
 import { log } from './logger.js';
 import { getStatusCode } from './errors/index.js';
 
 // ============== MODE DETECTION ==============
 
-const GATEWAY_API_ENABLED = false;
 
 // Gateway HTTP helpers removed (gateway service deprecated)
 
@@ -175,19 +179,6 @@ export async function resolveClarityModel(
   skipProviders: Set<string> = new Set(),
   skipKeyIds?: Set<string>
 ): Promise<ResolvedModel | null> {
-  if (GATEWAY_API_ENABLED) {
-    try {
-      return await apiPost<ResolvedModel>('/api/resolve', {
-        model,
-        estimatedTokens: tokens,
-        skipProviders: [...skipProviders],
-        skipKeyIds: skipKeyIds ? [...skipKeyIds] : [],
-      });
-    } catch (error: unknown) {
-      if (getStatusCode(error) === 503) return null;
-      throw error;
-    }
-  }
 
   // Local fallback
   const { resolveClarityModel: localResolve } = await import('../internal/providers/lib/model-resolver.js');
@@ -221,17 +212,6 @@ export interface ProviderCallOptions {
  * Used for images, embeddings, transcription.
  */
 export async function callProviderAPI<T = unknown>(options: ProviderCallOptions): Promise<T> {
-  if (GATEWAY_API_ENABLED) {
-    const { signal, ...bodyOptions } = options;
-    const result = await apiPost<T>('/api/call', bodyOptions, signal);
-
-    // Gateway returns base64-encoded binary for arrayBuffer responses — decode it
-    if (options.responseType === 'arrayBuffer' && typeof result === 'string') {
-      return Buffer.from(result, 'base64') as unknown as T;
-    }
-
-    return result;
-  }
 
   // Local fallback — convert audio field to FormData for the local callProviderAPI
   const { callProviderAPI: localCall } = await import('../internal/providers/lib/provider-api.js');
@@ -274,18 +254,6 @@ export function reportModelUsage(
   success: boolean,
   opts?: { latencyMs?: number; errorCode?: string; tokens?: number; reason?: string; retryAfterMs?: number }
 ): void {
-  if (GATEWAY_API_ENABLED) {
-    apiPost('/api/report', {
-      keyId,
-      provider,
-      modelId,
-      success,
-      ...opts,
-    }).catch((err: unknown) => {
-      log.general.warn({ err }, 'Failed to report model usage');
-    });
-    return;
-  }
 
   // Local fallback — fire-and-forget
   (async () => {
@@ -312,13 +280,6 @@ export function reportModelUsage(
  * Get all Clarity models.
  */
 export async function getAllClarityModels(): Promise<ClarityModel[]> {
-  if (GATEWAY_API_ENABLED) {
-    if (isCacheValid(modelsCache)) return modelsCache.data;
-    const data = await apiGet<{ models: ClarityModel[] }>('/api/models');
-    const models = data.models;
-    modelsCache = { data: models, expiresAt: Date.now() + CACHE_TTL };
-    return models;
-  }
 
   const { getAllClarityModels: localGetAll } = await import('../internal/providers/lib/clarity-models.js');
   return localGetAll();
@@ -328,10 +289,6 @@ export async function getAllClarityModels(): Promise<ClarityModel[]> {
  * Get all Clarity models with availability (checks health).
  */
 export async function getAvailableModels(): Promise<ClarityModelWithAvailability[]> {
-  if (GATEWAY_API_ENABLED) {
-    const data = await apiGet<{ models: ClarityModelWithAvailability[] }>('/api/models?available=true');
-    return data.models;
-  }
 
   const { getAvailableModels: localGetAvailable } = await import('../internal/providers/lib/clarity-models.js');
   return localGetAvailable();
@@ -341,10 +298,6 @@ export async function getAvailableModels(): Promise<ClarityModelWithAvailability
  * Get a specific Clarity model by ID.
  */
 export async function getClarityModel(modelId: string): Promise<ClarityModel | null> {
-  if (GATEWAY_API_ENABLED) {
-    const models = await getAllClarityModels();
-    return models.find(m => m.id === modelId) ?? null;
-  }
 
   const { getClarityModel: localGet } = await import('../internal/providers/lib/clarity-models.js');
   return localGet(modelId);
@@ -354,10 +307,6 @@ export async function getClarityModel(modelId: string): Promise<ClarityModel | n
  * Synchronous model lookup from cache (returns null if cache cold).
  */
 export function getClarityModelSync(modelId: string): ClarityModel | null {
-  if (GATEWAY_API_ENABLED) {
-    if (!isCacheValid(modelsCache)) return null;
-    return modelsCache.data.find(m => m.id === modelId) ?? null;
-  }
 
   // Local: always available from static CLARITY_MODELS
   // Use synchronous require-like approach via dynamic import cache
@@ -374,10 +323,6 @@ export function getClarityModelSync(modelId: string): ClarityModel | null {
  * Check if a model ID is a Clarity model.
  */
 export async function isClarityModel(modelId: string): Promise<boolean> {
-  if (GATEWAY_API_ENABLED) {
-    const models = await getAllClarityModels();
-    return models.some(m => m.id === modelId);
-  }
 
   const { isClarityModel: localIsClarity } = await import('../internal/providers/lib/clarity-models.js');
   return localIsClarity(modelId);
@@ -387,10 +332,6 @@ export async function isClarityModel(modelId: string): Promise<boolean> {
  * Get all Clarity models by category.
  */
 export async function getClarityModelsByCategory(category: string): Promise<ClarityModel[]> {
-  if (GATEWAY_API_ENABLED) {
-    const models = await getAllClarityModels();
-    return models.filter(m => m.category === category);
-  }
 
   const { getClarityModelsByCategory: localGetByCategory } = await import('../internal/providers/lib/clarity-models.js');
   return localGetByCategory(category as never);
@@ -400,11 +341,6 @@ export async function getClarityModelsByCategory(category: string): Promise<Clar
  * Get default model for a category.
  */
 export async function getDefaultModelForCategory(category: string): Promise<ClarityModel | null> {
-  if (GATEWAY_API_ENABLED) {
-    const models = await getClarityModelsByCategory(category);
-    if (models.length === 0) return null;
-    return models.reduce((best, m) => m.creditMultiplier < best.creditMultiplier ? m : best);
-  }
 
   const { getDefaultModelForCategory: localGetDefault } = await import('../internal/providers/lib/clarity-models.js');
   return localGetDefault(category as never);
@@ -458,45 +394,41 @@ export async function getProviderHealth(provider: string, modelId: string): Prom
 /**
  * Get plans.
  */
-export async function getPlans(filter?: Record<string, unknown>): Promise<PlanData[]> {
-  const { Plan } = await import('../internal/providers/models/plan.js');
-  return Plan.find(filter || {}).lean() as unknown as PlanData[];
+export async function getPlans(filter?: Parameters<typeof listPlans>[1]): Promise<PlanData[]> {
+  return (await listPlans(getDb(), filter ?? {})) as unknown as PlanData[];
 }
 
 /**
  * Get credit packages.
  */
 export async function getCreditPackages(active?: boolean): Promise<CreditPackageData[]> {
-  const { CreditPackage } = await import('../internal/providers/models/credit-package.js');
-  const filter: Record<string, boolean> = {};
-  if (active !== undefined) filter.isActive = active;
-  return CreditPackage.find(filter).lean() as unknown as CreditPackageData[];
+  // Built from DEFINED keys only: `{ isActive: undefined }` is a no-op filter in
+  // Mongo and would be a real `where isActive is null` if passed through here.
+  return (await listPackages(getDb(), active === undefined ? {} : { isActive: active })) as unknown as CreditPackageData[];
 }
 
 /**
  * Get features.
  */
 export async function getFeatures(): Promise<FeatureData[]> {
-  const { Feature } = await import('../internal/providers/models/feature.js');
-  return Feature.find({}).lean() as unknown as FeatureData[];
+  return (await listFeatures(getDb())) as unknown as FeatureData[];
 }
 
 /**
  * Get plan features.
  */
 export async function getPlanFeatures(planId?: string): Promise<PlanFeatureData[]> {
-  const { PlanFeature } = await import('../internal/providers/models/plan-feature.js');
-  const filter: Record<string, string> = {};
-  if (planId) filter.planId = planId;
-  return PlanFeature.find(filter).lean() as unknown as PlanFeatureData[];
+  return (await listMappings(getDb(), planId ? { planId } : {})) as unknown as PlanFeatureData[];
 }
 
 /**
  * Update a plan (e.g. to persist auto-created Stripe price IDs).
  */
-export async function updatePlan(planId: string, updates: Record<string, unknown>): Promise<PlanData | null> {
-  const { Plan } = await import('../internal/providers/models/plan.js');
-  return Plan.findOneAndUpdate({ planId }, { $set: updates }, { returnDocument: 'after' }).lean();
+export async function updatePlan(
+  planId: string,
+  updates: Parameters<typeof patchPlan>[2],
+): Promise<PlanData | null> {
+  return (await patchPlan(getDb(), planId, updates)) as unknown as PlanData | null;
 }
 
 // ============== KEY MANAGEMENT ==============
