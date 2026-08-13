@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun src/db/migrate.ts"
+    "db:migrate": "bun src/db/migrate.ts",
+    "db:seed": "bun scripts/seed-dev.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.12",
