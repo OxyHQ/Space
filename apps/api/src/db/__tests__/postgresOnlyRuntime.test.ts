@@ -118,6 +118,8 @@ describe('the checked-in public surfaces describe routes that exist', () => {
     const emittedEvents = [...handler.matchAll(/event: (oxystation\.[a-z_]+)/g)]
       .map((match) => match[1]);
 
+    expect(documentedEvents.length).toBeGreaterThan(0);
+    expect(emittedEvents.length).toBeGreaterThan(0);
     expect(new Set(documentedEvents)).toEqual(new Set(emittedEvents));
     expect(chatDocs).not.toContain('event: clarity.');
     expect(chatDocs).not.toContain('deepResearch?:');
