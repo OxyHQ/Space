@@ -21,7 +21,4 @@ export * from './workspaces.js';
 export * from './pages.js';
 export * from './databases.js';
 export * from './collab.js';
-export * from './billing.js';
-export * from './aiChat.js';
-export * from './providers.js';
-export * from './analytics.js';
+export * from './feedback.js';

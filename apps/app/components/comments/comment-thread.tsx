@@ -242,7 +242,7 @@ function CommentRow({
 }
 
 function shortAuthor(authorId: string): string {
-  // Mongo ObjectIds are 24-char hex strings; show a short prefix as fallback.
+  // Keep long account identifiers compact when profile data is unavailable.
   if (authorId.length > 8) return `${authorId.slice(0, 6)}…`;
   return authorId;
 }

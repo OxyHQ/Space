@@ -32,20 +32,9 @@ await esbuild.build({
   logLevel: 'info',
 });
 
-// Copy prompts directory to dist
-try {
-  await cp('prompts', 'dist/prompts', { recursive: true });
-  console.log('✅ Copied prompts to dist/');
-} catch (error) {
-  console.error('⚠️ Failed to copy prompts:', error);
-}
-
 // The generated SQL. `src/db/migrate.ts` resolves this folder relative to its
 // own module URL and throws when no journal is there, so a build that silently
 // skipped this step fails loudly at migrate time instead of reporting a clean
 // run over zero migrations. Deliberately NOT wrapped in try/catch: a build that
 // cannot ship the migrations must fail, not warn.
 await cp('src/drizzle', 'dist/drizzle', { recursive: true });
-console.log('✅ Copied drizzle migrations to dist/');
-
-console.log('✅ Build complete');

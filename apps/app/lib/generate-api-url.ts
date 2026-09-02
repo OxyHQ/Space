@@ -6,7 +6,7 @@ import config from './config';
  * Generate full API URL from a relative path
  * Uses the centralized config which respects EXPO_PUBLIC_API_URL from .env
  *
- * @param relativePath - Relative API path (e.g., '/auth/login', '/clarity/search')
+ * @param relativePath - Relative API path (e.g., '/auth/login', '/pages')
  * @returns Full API URL
  */
 export const generateAPIUrl = (relativePath: string): string => {

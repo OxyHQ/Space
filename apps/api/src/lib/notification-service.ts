@@ -4,8 +4,6 @@
  * Delivers notifications to users via multiple channels:
  * - in_app: Socket.io real-time event
  * - push: Expo push notifications (mobile)
- * - telegram/discord/whatsapp/slack: via channel outbound system
- *
  * Each notification is persisted and can be delivered to multiple channels simultaneously.
  *
  * ## The id coercion that used to guard every query here is gone
@@ -66,9 +64,6 @@ export interface SendNotificationOptions {
   priority?: NotificationPriority;
   channels?: NotificationChannel[];
   data?: Record<string, unknown>;
-  triggerId?: string;
-  conversationId?: string;
-  expiresAt?: Date;
 }
 
 /** The HTTP statuses a push service uses for "this subscription is dead". */
@@ -162,7 +157,6 @@ async function deliverPush(userId: string, notification: NotificationRow): Promi
       data: {
         notificationId: notification.id,
         type: notification.type,
-        conversationId: notification.conversationId,
         ...notification.data,
       },
       sound: 'default',
@@ -285,7 +279,6 @@ async function deliverWebPush(userId: string, notification: NotificationRow): Pr
     body: notification.body,
     notificationId: notification.id,
     type: notification.type,
-    conversationId: notification.conversationId,
     ...notification.data,
   });
 
@@ -325,9 +318,6 @@ export async function sendNotification(options: SendNotificationOptions): Promis
     body,
     priority = 'normal',
     data,
-    triggerId,
-    conversationId,
-    expiresAt,
   } = options;
 
   const channels = await resolveChannels(userId, options.channels);
@@ -347,9 +337,6 @@ export async function sendNotification(options: SendNotificationOptions): Promis
     deliveryStatus: { ...deliveryStatus },
     status: 'sent',
     priority,
-    triggerId,
-    conversationId,
-    expiresAt,
   });
 
   // Deliver to each channel in parallel. The outcomes accumulate into the local

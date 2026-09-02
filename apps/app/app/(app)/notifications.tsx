@@ -2,7 +2,7 @@ import { View, ScrollView, Pressable, Platform } from "react-native";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { useRouter } from "expo-router";
-import { ArrowLeft, Bell, BellOff, CheckCheck, Zap, Clock, Eye, AlertTriangle, MessageSquare, X } from "lucide-react-native";
+import { ArrowLeft, Bell, BellOff, CheckCheck, MessageSquare, X } from "lucide-react-native";
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@oxyhq/services";
 import * as ExpoNotifications from "expo-notifications";
@@ -14,19 +14,15 @@ import {
   useMarkAsRead,
   useMarkAllAsRead,
   useDismissNotification,
+  type Notification,
 } from "@/lib/hooks/use-notifications";
 
-const TYPE_ICONS: Record<string, typeof Zap> = {
-  trigger_result: Zap,
-  proactive_insight: Eye,
-  daily_briefing: Clock,
-  price_alert: AlertTriangle,
-  reminder: Bell,
-  chat_response_ready: MessageSquare,
-  agent_task_complete: Zap,
+const TYPE_ICONS: Record<Notification['type'], typeof MessageSquare> = {
+  mention: MessageSquare,
+  comment_reply: MessageSquare,
 };
 
-const PRIORITY_COLORS: Record<string, string> = {
+const PRIORITY_COLORS: Record<Notification['priority'], string> = {
   urgent: 'border-l-red-500',
   high: 'border-l-orange-400',
   normal: 'border-l-blue-400',
@@ -79,7 +75,7 @@ export default function NotificationsScreen() {
       const { status } = await ExpoNotifications.getPermissionsAsync();
       setPermissionStatus(status);
       setPushEnabled(status === "granted");
-    } catch {
+    } catch (_error: unknown) {
       setPermissionStatus("unavailable");
     } finally {
       setPushLoading(false);
@@ -97,9 +93,9 @@ export default function NotificationsScreen() {
     }
   };
 
-  const handleNotificationPress = useCallback((notification: any) => {
+  const handleNotificationPress = useCallback((notification: Notification) => {
     if (notification.status !== 'read') {
-      markAsRead.mutate(notification._id);
+      markAsRead.mutate(notification.id);
     }
   }, [markAsRead]);
 
@@ -183,19 +179,19 @@ export default function NotificationsScreen() {
           <Bell size={32} className="text-muted-foreground mb-3" />
           <Text className="text-base font-medium text-foreground mb-1">No notifications yet</Text>
           <Text className="text-sm text-muted-foreground text-center">
-            Set up triggers and routines to get proactive updates from Oxy Station.
+            Mentions and replies from your workspace will appear here.
           </Text>
         </View>
       ) : (
         <View className="py-2">
-          {notifications.map((notification: any) => {
+          {notifications.map((notification) => {
             const Icon = TYPE_ICONS[notification.type] || Bell;
             const isUnread = notification.status !== 'read' && notification.status !== 'dismissed';
             const priorityBorder = PRIORITY_COLORS[notification.priority] || PRIORITY_COLORS.normal;
 
             return (
               <Pressable
-                key={notification._id}
+                key={notification.id}
                 onPress={() => handleNotificationPress(notification)}
                 className={`px-6 py-4 border-b border-border border-l-2 ${priorityBorder} ${isUnread ? 'bg-muted/20' : ''} active:bg-muted/40`}
               >
@@ -215,7 +211,7 @@ export default function NotificationsScreen() {
                         <Pressable
                           onPress={(e) => {
                             e.stopPropagation();
-                            dismiss.mutate(notification._id);
+                            dismiss.mutate(notification.id);
                           }}
                           className="p-1"
                           hitSlop={8}

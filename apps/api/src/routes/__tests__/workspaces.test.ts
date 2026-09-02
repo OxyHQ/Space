@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { compareRoles, hasRole, WORKSPACE_ROLES } from '../../db/schema/workspaces.js';
 
 describe('workspace role helpers', () => {

@@ -1,53 +1,30 @@
 # Oxy Station API
 
-Express + TypeScript backend for Oxy Station.
+Express and TypeScript API for the Station workspace.
 
-## Tech
+## Runtime
 
-- Express + TypeScript
-- PostgreSQL + Drizzle
-- Redis (Valkey) for rate limits, caching, Socket.IO scale-out
-- Socket.IO for real-time events
-- BullMQ for async jobs
-- DigitalOcean Spaces (S3-compatible) for file uploads
-- Stripe for billing
-- Internal AI provider routing (Phase 5, not user-visible)
+- PostgreSQL/Drizzle is the only database and `DATABASE_URL` is required.
+- Socket.IO provides real-time workspace updates.
+- Redis/Valkey is optional for Socket.IO scale-out.
+- S3-compatible storage and browser push are optional.
+- Oxy session verification comes from `@oxyhq/core/server`.
 
-## Development
+Station has no provider runtime, provider-key storage, model routing, billing
+credits, or chat-completion endpoints. Provider credentials belong only to
+Kaana's encrypted PostgreSQL database.
+
+## Commands
 
 ```bash
-# from repo root
-bun run dev:api
-
-# from apps/api
 bun run dev
-```
-
-## Build
-
-```bash
+bun run lint
+bun run test
+STATION_TEST_DATABASE_URL=postgres://station:station@127.0.0.1:5439/postgres \
+  bun run test:pgdb
 bun run build
-bun run start
 ```
 
-## Environment
-
-Use `apps/api/.env.example` as the baseline.
-
-Key groups:
-
-- Server and CORS (`PORT`, `WEB_URL`, `API_BASE_URL`)
-- PostgreSQL (`DATABASE_URL`, required)
-- Auth secrets (`JWT_SECRET`, `SERVICE_SECRET`)
-- Queue/async execution (`REDIS_URL`)
-- Integrations and channels (`INTEGRATIONS_SERVICE_URL`, channel secrets)
-- Optional sandbox runtime (`DOCKER_HOST_URL`, `DOCKER_HOST_SECRET`)
-- Transitional provider-key fallback (documented in `.env.example`; do not expand)
-
-## Notes
-
-- All user-facing errors must be sanitized via `apps/api/src/lib/errors/sanitize.ts`.
-- Internal model-routing details (provider names, provider model IDs) must never leak in public responses or logs.
-- The legacy `/clarity/search` and `/v1/chat/completions` chat endpoints remain mounted while Phase 5 (Hub AI) is internal-only; they are not surfaced in the Oxy Station UI.
-- Hub AI's target route is Alia -> Oxy -> Kaana. The local provider-key table
-  and environment fallback remain live until that route replaces every caller.
+Start from `.env.example`. The only required secret-bearing runtime binding is
+the PostgreSQL `DATABASE_URL`; optional service credentials belong to their
+own non-inference integrations.

@@ -1,128 +1,54 @@
-# Oxy Station Developer Onboarding
+# Oxy Station developer onboarding
 
-Last updated: 2026-05-25
+Station is a Bun monorepo with an Expo client and an Express API.
 
-Welcome to Oxy Station — the workspace for docs, databases, and AI. This guide gets you productive on day 1.
-
-> The codebase is mid-pivot from a legacy AI chat product to a Notion-like workspace. Many backend modules (chat runtime, internal AI provider routing) remain in place but are not exposed in the Oxy Station UI. The roadmap delivers pages, blocks, databases, and real-time collab in upcoming phases.
-
-## Monorepo
-
-```
-apps/
-  app/    # Expo cross-platform client (web + iOS + Android)
-  api/    # Express backend API
+```text
+apps/app  -> HTTPS and Socket.IO -> apps/api -> PostgreSQL
 ```
 
-## Architecture Overview
+Redis/Valkey is optional and supports Socket.IO scale-out. S3-compatible
+storage is optional for uploads. Neither service replaces PostgreSQL.
 
-```
-                            +-------------------+
-                            |   Expo App (Web,  |
-     User  ───────────────> |   iOS, Android)   |
-                            +--------+----------+
-                                     |
-                                  HTTPS / SSE / WS
-                                     |
-                            +--------v----------+
-                            |  Express API      |
-                            |  (apps/api)       |
-                            +--+---------+------+
-                               |         |
-             +-----------------+---------+-----------------+
-             |                 |                           |
-      +------v-------+  +------v-------+        +----------v----------+
-      | PostgreSQL   |  | Redis/Valkey |        | Local AI provider   |
-      | (Drizzle)    |  | cache/queues |        | bridge (temporary)  |
-      +--------------+  +--------------+        +---------------------+
-```
+## Boundaries
 
-Hub AI's target route is Station -> Alia -> Oxy -> Kaana. The local provider
-bridge above remains live until that separate cutover replaces every caller.
+Station owns workspace data and collaboration. It does not execute providers,
+store provider keys, expose chat completions, or maintain a model catalogue.
+Workspace agent flows use `Station -> Alia -> Oxy -> Kaana`; provider
+credentials exist only in Kaana's encrypted PostgreSQL database.
 
-## Key Directories and Files
+The inference-boundary tests deliberately include positive fixtures. If one of
+the forbidden constructs is introduced, the detector must name it rather than
+passing because it scanned nothing.
 
-### API (`apps/api/src/`)
+## Important paths
 
-| Path | What it does | When you touch it |
-|------|-------------|-------------------|
-| `index.ts` | Express boot: DB connect, route mounting, Socket.IO setup | Adding a new top-level route |
-| `db/client.ts` | PostgreSQL/Drizzle connection; requires `DATABASE_URL` | DB config changes |
-| `lib/redis.ts` | Shared Redis/Valkey client | Caching, rate limiting |
-| `middleware/auth.ts` | JWT verification via OxyHQ, sets `req.userId` | Auth changes |
-| `db/schema/` | PostgreSQL schema declarations | Schema changes |
-| `internal/providers/` | Transitional local provider code; do not expand | Migration to Alia/Kaana only |
+| Path | Purpose |
+|---|---|
+| `apps/api/src/index.ts` | API boot and route mounts |
+| `apps/api/src/db/schema/` | current PostgreSQL schema |
+| `apps/api/src/drizzle/` | immutable migration history |
+| `apps/app/lib/api/` | authenticated API client and route constants |
+| `apps/app/app/` | Expo Router screens |
 
-### App (`apps/app/`)
-
-| Path | What it does | When you touch it |
-|------|-------------|-------------------|
-| `app/_layout.tsx` | Root layout: OxyProvider, fonts, theme, auth setup | App-wide providers |
-| `app/(app)/_layout.tsx` | Main layout: sidebar, screens, store hydration | Adding a new screen |
-| `lib/stores/` | Zustand stores | Client state changes |
-| `lib/api/client.ts` | API client with auth token injection | API communication |
-| `lib/api/routes.ts` | All API route constants | Adding/renaming endpoints |
-| `lib/config.ts` | API base URL configuration | API endpoint changes |
-
-## State Management Patterns
-
-### Zustand Stores (client-side, synchronous)
-
-Use for UI state and data that needs to persist across screens.
-
-### TanStack Query (server state, async)
-
-Use for data fetched from the API that needs caching, refetching, and stale management. API calls go through `lib/api/client.ts` which auto-attaches the OxyHQ JWT.
-
-**Rule of thumb**: if the data comes from the server, use TanStack Query. If it is purely UI state or needs synchronous access, use a Zustand store.
-
-## Common Tasks
-
-### Adding a new API route
-
-1. Create `apps/api/src/routes/my-route.ts` with an Express Router
-2. Import and mount it in `apps/api/src/index.ts`
-3. If it needs auth, apply the `auth` middleware — check existing routes for the pattern
-
-### Adding a new screen in the app
-
-1. Create a file in `apps/app/app/(app)/` — expo-router uses file-based routing
-2. Register navigation if needed
-3. Add the route constant to `apps/app/lib/api/routes.ts` if it needs an API endpoint
-
-### Running tests
+## Setup
 
 ```bash
-bun run --filter @oxystation/api test       # Default API suite
-bun run --filter @oxystation/api test:pgdb  # Real PostgreSQL suite
-bun run --filter @oxystation/api lint       # Lint the API
+bun install
+cp apps/api/.env.example apps/api/.env
+cp apps/app/.env.example apps/app/.env
+bun run dev:api
+bun run dev:app
 ```
 
-## Useful Commands
+## Gates
 
 ```bash
-bun install                       # Install all workspace dependencies
-bun run dev                       # Start all apps in dev mode
-bun run dev:api                   # API only (Express + hot reload)
-bun run dev:app                   # Expo app only (web + tunnel)
-bun run --filter @oxystation/api test       # API tests (Vitest)
-bun run --filter @oxystation/api test:pgdb  # Real PostgreSQL tests
-bun run --filter @oxystation/api lint       # Lint API code
+bun run --filter @oxystation/api lint
+bun run --filter @oxystation/api test
+STATION_TEST_DATABASE_URL=postgres://station:station@127.0.0.1:5439/postgres \
+  bun run --filter @oxystation/api test:pgdb
+bun run build:api
+EXPO_PUBLIC_API_URL=http://localhost:4001 bun run build:app
 ```
 
-Do not run an SST or DigitalOcean deploy from this checkout. The checked-in
-specifications still point at the wrong branch and retired database binding;
-the [deployment status](deployment.md) lists the live discovery required first.
-
-Environment: copy `apps/api/.env.example` to `apps/api/.env` and set
-`DATABASE_URL`. Redis is optional for local development. Existing provider
-environment variables are a temporary availability fallback, not an extension
-point; do not add providers there.
-
-## Links to Deep Docs
-
-| Topic | File |
-|-------|------|
-| API reference | [docs/api-reference.md](api-reference.md) |
-| Deployment status and blockers | [docs/deployment.md](deployment.md) |
-| Project conventions | [CLAUDE.md](../CLAUDE.md) (also read by AI coding assistants) |
+See [deployment status](deployment.md) before changing a release workflow.

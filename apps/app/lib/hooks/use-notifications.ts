@@ -2,16 +2,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOxy } from '@oxyhq/services';
 import apiClient from '../api/client';
 
-interface Notification {
-  _id: string;
-  type: string;
+export interface Notification {
+  id: string;
+  type: 'mention' | 'comment_reply';
   title: string;
   body: string;
   status: 'pending' | 'sent' | 'read' | 'dismissed';
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  data?: Record<string, any>;
-  triggerId?: string;
-  conversationId?: string;
+  data?: Record<string, unknown>;
   createdAt: string;
   readAt?: string;
 }

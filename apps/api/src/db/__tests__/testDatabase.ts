@@ -112,8 +112,16 @@ async function applySchema(client: postgres.Sql): Promise<void> {
     const recorded = await client.unsafe(`select fingerprint from ${FINGERPRINT_TABLE} limit 1`);
     if (recorded[0]?.fingerprint === fingerprint) return;
 
-    const quoted = tables.map((name) => `"${name}"`).join(', ');
-    await client.unsafe(`drop table if exists ${quoted} cascade`);
+    const existing = await client.unsafe(
+      `select tablename from pg_tables
+       where schemaname = 'public' and tablename <> '${FINGERPRINT_TABLE}'`,
+    );
+    const quoted = existing
+      .map((row) => `"${String(row.tablename).replaceAll('"', '""')}"`)
+      .join(', ');
+    if (quoted) {
+      await client.unsafe(`drop table if exists ${quoted} cascade`);
+    }
     for (const statement of statements) {
       await client.unsafe(statement);
     }

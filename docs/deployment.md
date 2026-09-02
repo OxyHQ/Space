@@ -1,56 +1,41 @@
 # Deployment status
 
-Last verified from source: 2026-09-02
+Last verified: 2026-09-02.
 
-Station is not deployable from the checked-in DigitalOcean specifications yet.
-Do not apply `sst.config.ts` or `.do/app.yaml` until the blockers below are
-resolved against the live DigitalOcean app.
+## Verified state
 
-## Confirmed source/runtime contract
+- `station.oxy.so` and `api.station.oxy.so` do not currently resolve.
+- The repository workflow has deployed the frontend artifact to the
+  Cloudflare Pages project at `bd276987.oxystation.pages.dev`.
+- There is no public Station API deployment. The web artifact therefore is not
+  evidence of a working end-to-end production service.
+- The obsolete DigitalOcean and SST specifications were removed because they
+  described a retired database/runtime and were not an apply-ready source of
+  truth.
 
-- The API requires `DATABASE_URL` and executes `select 1` before listening.
-- Schema and migrations are PostgreSQL/Drizzle under `apps/api/src/db/` and
-  `apps/api/src/drizzle/`.
-- Valkey is optional for local development and used for cache, rate limits and
-  Socket.IO scale-out when present.
-- The local AI provider bridge still reads `provider_keys` and existing
-  provider environment variables. It is removed only after Hub AI routes
-  through Alia -> Oxy -> Kaana.
+## Runtime contract
 
-## Blocking mismatches in both specifications
+- The API requires `DATABASE_URL`, executes a real PostgreSQL query before
+  listening, and uses only the Drizzle schema and migrations in this repo.
+- The frontend build requires an explicit `EXPO_PUBLIC_API_URL`. The Cloudflare
+  workflow reads it from the `STATION_API_URL` repository variable and fails if
+  it is absent; it never falls back to an invented production host.
+- Station deployment configuration contains no provider credentials, provider
+  runtime, inference route, or MongoDB binding.
 
-The checked-in `.do/app.yaml` and `sst.config.ts` are legacy declarations, not
-an apply-ready source of truth:
+## Before an API deployment
 
-1. They point production at branch `main`, but this repository's default and
-   only release branch is `master`.
-2. They inject a Mongo connection and do not bind the `DATABASE_URL` required
-   by the current API process.
-3. Replacing that entry with an empty `SECRET` declaration does not provision a
-   PostgreSQL database or prove the secret already exists in App Platform.
+1. Provision or identify the intended PostgreSQL database and secret binding.
+2. Choose the API hosting target and verify its release branch and health
+   endpoint.
+3. Apply migrations from zero and from the last production migration.
+4. Set `STATION_API_URL` to the verified API origin.
+5. Deploy the frontend and probe an authenticated workspace request through the
+   public origin.
 
-Changing only the branch could activate `deploy_on_push` against a process that
-cannot boot, so branch and database wiring must be reviewed as one production
-change after the real app and database IDs are known.
+Do not create DNS or claim production readiness until those facts are verified.
 
-## Required read-only discovery
-
-Before the infrastructure PR:
-
-1. Read the live App Platform app ID, spec and active deployment.
-2. Resolve the PostgreSQL cluster, database, user and connection binding that
-   Station will use; do not guess names.
-3. Confirm how the current `DATABASE_URL` is stored and whether updating the
-   spec preserves its secret value.
-4. Compare live domains and Spaces resources with the checked-in names.
-5. Produce the complete spec diff before applying anything.
-
-This environment had no DigitalOcean MCP, token file, token environment
-variable or `doctl`, so none of those live facts were available for this PR.
-
-## Local verification
-
-Run the API against PostgreSQL 17:
+## Local PostgreSQL verification
 
 ```bash
 docker compose -f apps/api/docker-compose.postgres.yml up -d
@@ -58,16 +43,3 @@ STATION_TEST_DATABASE_URL=postgres://station:station@127.0.0.1:5439/postgres \
   bun run --filter @oxystation/api test:pgdb
 docker compose -f apps/api/docker-compose.postgres.yml down
 ```
-
-Normal repository gates:
-
-```bash
-bun install
-git diff --exit-code -- bun.lock
-bun run --filter @oxystation/api lint
-bun run --filter @oxystation/api test
-bun run build:api
-```
-
-No deploy or rollback command belongs in this guide until the production
-binding has been discovered and the infrastructure mismatch is fixed.

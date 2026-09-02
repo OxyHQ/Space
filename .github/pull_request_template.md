@@ -15,6 +15,6 @@
 ## Checklist
 
 - [ ] TypeScript compiles (`tsc --noEmit`)
-- [ ] Tests pass (`bun test --filter @oxystation/api`)
-- [ ] No provider names exposed in UI, errors, or API responses
+- [ ] Unit and real-PostgreSQL tests pass
+- [ ] Inference-boundary gates pass (no provider env, keys, SDKs, execution, legacy routes, or Mongo runtime)
 - [ ] Lint passes

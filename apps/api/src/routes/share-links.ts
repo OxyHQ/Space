@@ -27,8 +27,22 @@ function generateToken(): string {
 }
 
 function shareLinkPublicUrl(token: string): string {
-  const base = process.env.OXYSTATION_PUBLIC_URL || 'https://station.oxy.so';
-  return `${base.replace(/\/$/, '')}/share/${token}`;
+  const configuredOrigin = process.env.OXYSTATION_PUBLIC_URL;
+  if (!configuredOrigin) {
+    throw new Error('OXYSTATION_PUBLIC_URL is required to create share links');
+  }
+  const origin = new URL(configuredOrigin);
+  if (
+    !['http:', 'https:'].includes(origin.protocol) ||
+    origin.pathname !== '/' ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash
+  ) {
+    throw new Error('OXYSTATION_PUBLIC_URL must be an HTTP(S) origin');
+  }
+  return `${origin.origin}/share/${token}`;
 }
 
 const createShareLinkSchema = z.object({

@@ -9,11 +9,11 @@ import {
   Image, FileText, Search, ShoppingBag, MoreHorizontal, ExternalLink,
   BookOpen, Globe, PenTool, Sparkles, User, CreditCard, Bell, LogOut,
   Folder, Check, Brain, Ghost, Bot, Bookmark, AlertTriangle, Pin,
-  ShieldCheck,
+  ShieldCheck, type LucideIcon,
 } from "lucide-react-native";
 
 // Map iOS SF Symbol names to Lucide icons for web rendering
-const SF_SYMBOL_MAP: Record<string, React.ComponentType<any>> = {
+const SF_SYMBOL_MAP: Record<string, LucideIcon> = {
   "star": Star, "star.fill": Star, "pencil": Pencil, "trash": Trash2,
   "square.and.arrow.up": Share2, "arrow.down.doc": Download,
   "gearshape": Settings, "questionmark.circle": HelpCircle,
@@ -46,24 +46,22 @@ function DropdownMenu({
   const onOpenChangeRef = React.useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
-  const closeRef = React.useRef<() => void>();
-  if (!closeRef.current) {
-    closeRef.current = () => {
+  const [close] = React.useState<() => void>(
+    () => () => {
       setInternalOpen(false);
       onOpenChangeRef.current?.(false);
-    };
-  }
+    },
+  );
 
   React.useEffect(() => {
-    const cb = closeRef.current!;
-    openMenus.add(cb);
-    return () => { openMenus.delete(cb); };
-  }, []);
+    openMenus.add(close);
+    return () => { openMenus.delete(close); };
+  }, [close]);
 
   const handleOpenChange = (next: boolean) => {
     if (next) {
       openMenus.forEach((cb) => {
-        if (cb !== closeRef.current) cb();
+        if (cb !== close) cb();
       });
     }
     setInternalOpen(next);

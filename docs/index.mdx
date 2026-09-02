@@ -1,81 +1,41 @@
 ---
 title: Oxy Station
-description: Oxy Station — your workspace for docs, databases, and AI.
+description: Oxy Station workspace for documents, databases, and collaboration.
 order: 0
 ---
 
 # Oxy Station
 
-Workspace for docs, databases, and AI, by [Oxy](https://oxy.so).
+Oxy Station is an Expo and Express workspace for pages, blocks, typed
+databases, comments, sharing, notifications, and real-time collaboration.
 
-<Badge variant="success">App</Badge> <Badge>SaaS</Badge>
+<Badge variant="success">App</Badge> <Badge>Workspace</Badge>
 
-**Live:** [station.oxy.so](https://station.oxy.so)
+## Architecture
 
-## What it is
+- `apps/app` — Expo app for web, iOS, and Android.
+- `apps/api` — Express API with PostgreSQL/Drizzle and Socket.IO.
+- `@oxyhq/services` and `@oxyhq/core` — Oxy session identity.
 
-Oxy Station is a Notion-like workspace surface running on the Oxy ecosystem. Today, the codebase is mid-pivot from a legacy AI chat product — Phase 0 has stripped the visible chat UI, and pages, blocks, databases, real-time collab, and the native AI hub land in subsequent phases.
+Station is PostgreSQL-only. It contains no provider adapters, provider-key
+store, model router, or inference endpoint. Agent flows belong to Alia and
+reach inference through Oxy and Kaana. Provider credentials live only in
+Kaana's encrypted PostgreSQL store.
 
-Surfaces:
-
-- **Expo client** — web + iOS + Android (`apps/app`, built with Expo 55, React Native 0.83, NativeWind, expo-router)
-- **Express API** — TypeScript backend (`apps/api`, PostgreSQL/Drizzle, Redis/Valkey, Socket.IO)
-
-## Monorepo layout
-
-```
-apps/
-  app/    @oxystation/app    Expo cross-platform client (web + iOS + Android)
-  api/    @oxystation/api    Express backend
-sst.config.ts              SST infra: DO App Platform, DO Spaces, Cloudflare
-```
-
-## Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Expo 55, React Native 0.83, React 19, NativeWind, Reanimated v4, Zustand, TanStack Query, expo-router |
-| Backend | Express, TypeScript, PostgreSQL (Drizzle), Socket.IO, Redis (Valkey) |
-| Auth | `@oxyhq/services` (web + native), `@oxyhq/core` (API) |
-| Internal AI | Internal-only provider routing (Phase 5) — never exposed to end users |
-| Infra | SST 4.x on DigitalOcean App Platform + Spaces, fronted by Cloudflare |
-
-## Install
-
-Clone and install with `bun` (this is a bun workspace; do not use npm or yarn):
+## Start locally
 
 ```sh
-git clone https://github.com/OxyHQ/Station.git
-cd Station
 bun install
-```
-
-Workspaces:
-
-- `apps/api` (`@oxystation/api`)
-- `apps/app` (`@oxystation/app`)
-
-## Quick start
-
-```sh
-# Backend (port 4001)
+cp apps/api/.env.example apps/api/.env
+cp apps/app/.env.example apps/app/.env
 bun run dev:api
-
-# Frontend (Expo, web + tunnel)
 bun run dev:app
 ```
 
-The API expects a `.env` in `apps/api/` with `DATABASE_URL`, Redis (optional),
-and Oxy auth configured. Start from `apps/api/.env.example`. The local AI
-runtime still has a frozen provider-key environment fallback; the target
-Alia -> Oxy -> Kaana route removes it in a separate cutover.
+The API needs `DATABASE_URL`; the app needs `EXPO_PUBLIC_API_URL`.
 
 ## Topics
 
-- **[API Reference](api-reference)** — endpoint catalogue
-- **[Deployment status](deployment)** — blocked DigitalOcean spec audit and required live discovery
-- **[Onboarding](onboarding)** — developer onboarding walkthrough
-
-## Repository
-
-Source: [github.com/OxyHQ/Station](https://github.com/OxyHQ/Station)
+- **[API reference](api-reference)** — mounted workspace routes.
+- **[Deployment status](deployment)** — verified deployment state and blockers.
+- **[Onboarding](onboarding)** — development workflow and boundaries.

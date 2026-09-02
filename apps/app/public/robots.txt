@@ -10,16 +10,10 @@ Disallow: /
 User-agent: *
 Allow: /
 Allow: /share/
-Disallow: /authorize
-Disallow: /billing
-Disallow: /conversations
 Disallow: /db/
-Disallow: /forgot-password
 Disallow: /notifications
 Disallow: /p/
-Disallow: /reset-password
 Disallow: /settings/
-Disallow: /subscribe
 Disallow: /trash
 
 Sitemap: https://station.oxy.so/sitemap.xml

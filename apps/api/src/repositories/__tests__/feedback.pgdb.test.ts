@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { feedback } from '../../db/schema/billing.js';
+import { feedback } from '../../db/schema/feedback.js';
 import {
   createFeedback,
   findFeedbackByIdForUser,

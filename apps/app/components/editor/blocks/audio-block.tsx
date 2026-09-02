@@ -8,8 +8,8 @@ import type { BlockComponentProps } from "./types";
 /**
  * Audio block — accepts a URL (paste or upload) and renders a player.
  * On web we use the standard <audio> element; on native we link out to the
- * URL (apps that need playback wire in `expo-audio` separately — it isn't
- * required to merely store the block).
+ * URL. Station stores the block and opens native audio in the system browser;
+ * it does not request microphone or background-audio permissions.
  */
 export function AudioBlock({ block, onChangeContent }: BlockComponentProps) {
   const { colors } = useColorScheme();
