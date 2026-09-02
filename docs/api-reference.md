@@ -13,8 +13,9 @@ Protected routes accept an Oxy session JWT in
 provisioned Oxy service credential. Station does not expose a developer API-key
 management route.
 
-`GET /health/live`, the billing catalogue, feedback submission and the public
-share-token route are examples of routes that do not require a user session.
+`GET /health/live`, the billing catalogue and the public share-token route are
+examples of routes that do not require a user session. Feedback routes require
+an authenticated Oxy session.
 Individual route middleware remains the source of truth for authentication.
 
 ## Mounted route groups
