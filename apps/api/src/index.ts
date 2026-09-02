@@ -21,7 +21,6 @@ import feedbackRouter from './routes/feedback.js';
 import modelsStatsRouter from './routes/models-stats.js';
 import internalRouter from './routes/internal.js';
 import analyticsRouter from './routes/analytics.js';
-import webhooksRouter from './routes/webhooks.js';
 import notificationsRouter from './routes/notifications.js';
 import workspacesRouter from './routes/workspaces.js';
 import shareLinksRouter from './routes/share-links.js';
@@ -170,7 +169,6 @@ app.use('/billing', billingRouter);
 app.use('/feedback', feedbackRouter);
 app.use('/models', modelsStatsRouter);
 app.use('/analytics', analyticsRouter);
-app.use('/webhooks', webhooksRouter);
 app.use('/notifications', notificationsRouter);
 app.use('/workspaces', workspacesRouter);
 app.use(shareLinksRouter);
@@ -200,7 +198,6 @@ app.get('/', (_req, res) => {
       '/feedback',
       '/models',
       '/analytics',
-      '/webhooks',
       '/notifications',
       '/workspaces',
       '/pages',
@@ -328,6 +325,6 @@ getDb()
     process.on('SIGINT', () => shutdown('SIGINT'));
   })
   .catch((error) => {
-    console.error('Failed to connect to MongoDB:', error);
+    console.error('Failed to connect to PostgreSQL:', error);
     process.exit(1);
   });

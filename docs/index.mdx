@@ -19,7 +19,7 @@ Oxy Station is a Notion-like workspace surface running on the Oxy ecosystem. Tod
 Surfaces:
 
 - **Expo client** — web + iOS + Android (`apps/app`, built with Expo 55, React Native 0.83, NativeWind, expo-router)
-- **Express API** — TypeScript backend (`apps/api`, MongoDB, Redis/Valkey, Socket.IO)
+- **Express API** — TypeScript backend (`apps/api`, PostgreSQL/Drizzle, Redis/Valkey, Socket.IO)
 
 ## Monorepo layout
 
@@ -35,7 +35,7 @@ sst.config.ts              SST infra: DO App Platform, DO Spaces, Cloudflare
 | Layer | Technology |
 |-------|------------|
 | Frontend | Expo 55, React Native 0.83, React 19, NativeWind, Reanimated v4, Zustand, TanStack Query, expo-router |
-| Backend | Express, TypeScript, MongoDB (Mongoose, shared `db-oxy` cluster), Socket.IO, Redis (Valkey) |
+| Backend | Express, TypeScript, PostgreSQL (Drizzle), Socket.IO, Redis (Valkey) |
 | Auth | `@oxyhq/services` (web + native), `@oxyhq/core` (API) |
 | Internal AI | Internal-only provider routing (Phase 5) — never exposed to end users |
 | Infra | SST 4.x on DigitalOcean App Platform + Spaces, fronted by Cloudflare |
@@ -46,7 +46,7 @@ Clone and install with `bun` (this is a bun workspace; do not use npm or yarn):
 
 ```sh
 git clone https://github.com/OxyHQ/Station.git
-cd Clarity
+cd Station
 bun install
 ```
 
@@ -65,14 +65,16 @@ bun run dev:api
 bun run dev:app
 ```
 
-The API expects a `.env` in `apps/api/` with MongoDB, Redis, and Oxy auth configured. See `apps/api/example.env`.
+The API expects a `.env` in `apps/api/` with `DATABASE_URL`, Redis (optional),
+and Oxy auth configured. Start from `apps/api/.env.example`. The local AI
+runtime still has a frozen provider-key environment fallback; the target
+Alia -> Oxy -> Kaana route removes it in a separate cutover.
 
 ## Topics
 
 - **[API Reference](api-reference)** — endpoint catalogue
-- **[Deployment](deployment)** — SST + DigitalOcean + Cloudflare infra-as-code
+- **[Deployment status](deployment)** — blocked DigitalOcean spec audit and required live discovery
 - **[Onboarding](onboarding)** — developer onboarding walkthrough
-- **[OxyHQ Auth](oxyhq-auth)** — which OxyHQ package to use per surface
 
 ## Repository
 

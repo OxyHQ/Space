@@ -29,20 +29,16 @@ apps/
                             |  (apps/api)       |
                             +--+---------+------+
                                |         |
-               +---------------+         +----------------+
-               |                                          |
-      +--------v---------+                  +-------------v-----------+
-      |  MongoDB         |                  |  Internal AI providers  |
-      |  (Mongoose,      |                  |  (Phase 5, internal     |
-      |   db-oxy cluster)|                  |   routing, not user-    |
-      +--------+---------+                  |   visible)              |
-               |                            +-------------------------+
-      +--------v---------+
-      |  Redis (Valkey)  |     Socket.IO real-time events
-      |  rate limits,    |
-      |  caching         |
-      +-----------------+
+             +-----------------+---------+-----------------+
+             |                 |                           |
+      +------v-------+  +------v-------+        +----------v----------+
+      | PostgreSQL   |  | Redis/Valkey |        | Local AI provider   |
+      | (Drizzle)    |  | cache/queues |        | bridge (temporary)  |
+      +--------------+  +--------------+        +---------------------+
 ```
+
+Hub AI's target route is Station -> Alia -> Oxy -> Kaana. The local provider
+bridge above remains live until that separate cutover replaces every caller.
 
 ## Key Directories and Files
 
@@ -51,11 +47,11 @@ apps/
 | Path | What it does | When you touch it |
 |------|-------------|-------------------|
 | `index.ts` | Express boot: DB connect, route mounting, Socket.IO setup | Adding a new top-level route |
-| `lib/db.ts` | MongoDB connection (passes `dbName` to `mongoose.connect()`) | DB config changes |
+| `db/client.ts` | PostgreSQL/Drizzle connection; requires `DATABASE_URL` | DB config changes |
 | `lib/redis.ts` | Shared Redis/Valkey client | Caching, rate limiting |
 | `middleware/auth.ts` | JWT verification via OxyHQ, sets `req.userId` | Auth changes |
-| `models/` | Mongoose models | Schema changes |
-| `internal/providers/` | Internal AI provider routing (Phase 5, CORS-restricted, never exposed) | Internal model config |
+| `db/schema/` | PostgreSQL schema declarations | Schema changes |
+| `internal/providers/` | Transitional local provider code; do not expand | Migration to Alia/Kaana only |
 
 ### App (`apps/app/`)
 
@@ -97,8 +93,9 @@ Use for data fetched from the API that needs caching, refetching, and stale mana
 ### Running tests
 
 ```bash
-bun test --filter @oxystation/api      # Run all API tests
-bun run lint                         # Lint the API
+bun run --filter @oxystation/api test       # Default API suite
+bun run --filter @oxystation/api test:pgdb  # Real PostgreSQL suite
+bun run --filter @oxystation/api lint       # Lint the API
 ```
 
 ## Useful Commands
@@ -108,19 +105,24 @@ bun install                       # Install all workspace dependencies
 bun run dev                       # Start all apps in dev mode
 bun run dev:api                   # API only (Express + hot reload)
 bun run dev:app                   # Expo app only (web + tunnel)
-bun test --filter @oxystation/api   # API tests (vitest)
-bun run lint                      # Lint API code
-bunx sst dev                      # Start SST dev multiplexer
-bunx sst deploy --stage dev       # Deploy to a stage
+bun run --filter @oxystation/api test       # API tests (Vitest)
+bun run --filter @oxystation/api test:pgdb  # Real PostgreSQL tests
+bun run --filter @oxystation/api lint       # Lint API code
 ```
 
-Environment: copy `apps/api/example.env` to `apps/api/.env` and fill in your MongoDB URI, Redis URL, and provider secrets. The database name is computed automatically as `oxystation-{NODE_ENV}` — do not embed it in the URI.
+Do not run an SST or DigitalOcean deploy from this checkout. The checked-in
+specifications still point at the wrong branch and retired database binding;
+the [deployment status](deployment.md) lists the live discovery required first.
+
+Environment: copy `apps/api/.env.example` to `apps/api/.env` and set
+`DATABASE_URL`. Redis is optional for local development. Existing provider
+environment variables are a temporary availability fallback, not an extension
+point; do not add providers there.
 
 ## Links to Deep Docs
 
 | Topic | File |
 |-------|------|
 | API reference | [docs/api-reference.md](api-reference.md) |
-| OxyHQ authentication | [docs/oxyhq-auth.md](oxyhq-auth.md) |
-| Deployment (SST + DigitalOcean) | [docs/deployment.md](deployment.md) |
+| Deployment status and blockers | [docs/deployment.md](deployment.md) |
 | Project conventions | [CLAUDE.md](../CLAUDE.md) (also read by AI coding assistants) |

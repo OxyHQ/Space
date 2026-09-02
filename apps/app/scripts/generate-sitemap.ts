@@ -27,42 +27,6 @@ const staticRoutes: SitemapURL[] = [
     changefreq: 'daily',
     priority: 1.0,
   },
-  {
-    loc: '/register',
-    lastmod: CURRENT_DATE,
-    changefreq: 'monthly',
-    priority: 0.8,
-  },
-  {
-    loc: '/library',
-    lastmod: CURRENT_DATE,
-    changefreq: 'weekly',
-    priority: 0.7,
-  },
-  {
-    loc: '/roles',
-    lastmod: CURRENT_DATE,
-    changefreq: 'weekly',
-    priority: 0.7,
-  },
-  {
-    loc: '/developers',
-    lastmod: CURRENT_DATE,
-    changefreq: 'weekly',
-    priority: 0.8,
-  },
-  {
-    loc: '/developers/documentation',
-    lastmod: CURRENT_DATE,
-    changefreq: 'weekly',
-    priority: 0.9,
-  },
-  {
-    loc: '/developers/examples',
-    lastmod: CURRENT_DATE,
-    changefreq: 'weekly',
-    priority: 0.8,
-  },
 ];
 
 function generateSitemapXML(urls: SitemapURL[]): string {

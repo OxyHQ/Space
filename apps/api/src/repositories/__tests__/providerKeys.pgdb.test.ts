@@ -413,11 +413,9 @@ describe('rate-limit windows', () => {
   });
 
   /**
-   * `recordKeyUsage` is called with env-derived ids like `env-google-0`
-   * (`provider-api.ts:135`). In Mongo that is a `ref`-ed ObjectId path and the
-   * insert throws a CastError the caller sees. Without the foreign key Postgres
-   * would store the dangling id happily — turning a loud failure into a silent
-   * one. This is the assertion that the failure stayed loud.
+   * An environment-derived id has no row. Without the foreign key Postgres
+   * would store the dangling id happily, so the transitional failure must stay
+   * loud until PR B removes the environment-key path.
    */
   it('refuses a usage row for a key that does not exist', async () => {
     await expect(

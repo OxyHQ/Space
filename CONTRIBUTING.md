@@ -12,8 +12,12 @@ Oxy Station has not been renamed to `main`. Branch from `master`, and target `ma
 
 - **Bun.** The package manager for every Oxy repository, never npm or yarn. The pinned version is `packageManager` in the root `package.json`.
 - **Node.js 22.** The runtime the API is built and deployed on. CI pins it alongside bun.
-- **MongoDB**, local or remote, to run the API. The test suite does not need one.
+- **PostgreSQL 17**, local or remote, to run the API and its real-database suite.
 - **Redis or Valkey**, optional. Caching falls back gracefully without it.
+
+Station's surviving provider runtime still has an environment-key fallback.
+Treat it as a frozen availability bridge: do not add providers or another key
+source. It is removed only after Hub AI routes through Alia -> Oxy -> Kaana.
 
 ## Setup
 
@@ -50,9 +54,15 @@ Oxy Station replaced a legacy AI chat product, and its code and copy carry the v
 
 ```bash
 bun run --filter @oxystation/api test
+bun run --filter @oxystation/api test:pgdb
 ```
 
-Vitest. Place test files next to the source as `*.test.ts`. `apps/api` is the only workspace with a suite today, and it mocks its data layer, so nothing needs to be running. Note that this is `bun run --filter ... test`, which runs the package's Vitest script, and not `bun test`, which would start Bun's own unrelated test runner.
+Vitest. Place test files next to the source as `*.test.ts`. The default suite
+does not need a database. The `test:pgdb` suite uses a disposable PostgreSQL
+database; `apps/api/docker-compose.postgres.yml` provides the documented local
+instance. Note that this is `bun run --filter ... test`, which runs the
+package's Vitest script, and not `bun test`, which would start Bun's own
+unrelated test runner.
 
 CI runs the following on every pull request, and each line runs locally as written:
 
