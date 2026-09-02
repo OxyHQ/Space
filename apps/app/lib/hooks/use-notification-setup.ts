@@ -12,15 +12,16 @@ import Constants from 'expo-constants';
 import { useQueryClient } from '@tanstack/react-query';
 import { useOxy } from '@oxyhq/services';
 import { io as socketIO } from 'socket.io-client';
+import { useRouter } from 'expo-router';
 import config from '@/lib/config';
 import apiClient from '@/lib/api/client';
 
 // ── Constants ──────────────────────────────────────────────────────
-const PROJECT_ID =
-  Constants.expoConfig?.extra?.eas?.projectId ?? 'ca1a1ca1-2469-4ceb-8387-e43d6832bbab';
+const PROJECT_ID = Constants.expoConfig?.extra?.eas?.projectId;
 
 export function useNotificationSetup() {
-  const { user, isAuthenticated } = useOxy();
+  const { user, isAuthenticated, oxyServices } = useOxy();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const tokenRef = useRef<string | null>(null);
   const webPushRegisteredRef = useRef(false);
@@ -31,6 +32,8 @@ export function useNotificationSetup() {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
         shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
       }),
@@ -63,6 +66,7 @@ export function useNotificationSetup() {
         if (finalStatus !== 'granted' || cancelled) return;
 
         // Get Expo push token
+        if (!PROJECT_ID) return;
         const { data: token } = await Notifications.getExpoPushTokenAsync({
           projectId: PROJECT_ID,
         });
@@ -75,8 +79,8 @@ export function useNotificationSetup() {
           token,
           platform: Platform.OS,
         });
-      } catch {
-        // Non-critical — expected to fail in dev without FCM credentials
+      } catch (_error: unknown) {
+        if (!cancelled) tokenRef.current = null;
       }
     })();
 
@@ -85,16 +89,20 @@ export function useNotificationSetup() {
     };
   }, [isAuthenticated, user?.id]);
 
-  // ── Notification tap handler (deep-link target will be re-added in Phase 1) ───────
+  // ── Notification tap handler ─────────────────────────────────
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
-      () => {
+      (response) => {
         if (!isAuthenticated) return;
+        const pageId = response.notification.request.content.data?.pageId;
+        if (typeof pageId === 'string') {
+          router.push({ pathname: '/(app)/p/[pageId]', params: { pageId } });
+        }
       },
     );
 
     return () => subscription.remove();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, router]);
 
   // ── Web push registration (browser only) ──────────────────────
   useEffect(() => {
@@ -122,8 +130,8 @@ export function useNotificationSetup() {
           const permission = await Notification.requestPermission();
           if (cancelled || permission !== 'granted') return;
 
-          // Convert VAPID key from base64url to Uint8Array
-          const vapidKey = urlBase64ToUint8Array(vapidData.publicKey);
+          // Convert VAPID key from base64url to an ArrayBuffer
+          const vapidKey = urlBase64ToArrayBuffer(vapidData.publicKey);
 
           // Subscribe
           subscription = await registration.pushManager.subscribe({
@@ -142,8 +150,8 @@ export function useNotificationSetup() {
         });
 
         if (!cancelled) webPushRegisteredRef.current = true;
-      } catch {
-        // Non-critical — web push not available in all browsers/contexts
+      } catch (_error: unknown) {
+        if (!cancelled) webPushRegisteredRef.current = false;
       }
     })();
 
@@ -157,15 +165,15 @@ export function useNotificationSetup() {
     if (!isAuthenticated || !user?.id) return;
 
     const socket = socketIO(config.apiUrl, {
+      auth: (callback) => {
+        const token = oxyServices.getAccessToken();
+        callback(token ? { token } : {});
+      },
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 10000,
-    });
-
-    socket.on('connect', () => {
-      socket.emit('subscribe-notifications', user.id);
     });
 
     socket.on('notification', () => {
@@ -176,19 +184,20 @@ export function useNotificationSetup() {
     return () => {
       socket.disconnect();
     };
-  }, [isAuthenticated, user?.id, queryClient]);
+  }, [isAuthenticated, user?.id, oxyServices, queryClient]);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/** Convert a base64url-encoded VAPID key to a Uint8Array for PushManager.subscribe */
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+/** Convert a base64url-encoded VAPID key to an ArrayBuffer for PushManager.subscribe. */
+function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(base64);
-  const output = new Uint8Array(raw.length);
+  const buffer = new ArrayBuffer(raw.length);
+  const output = new Uint8Array(buffer);
   for (let i = 0; i < raw.length; ++i) {
     output[i] = raw.charCodeAt(i);
   }
-  return output;
+  return buffer;
 }

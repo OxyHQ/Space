@@ -209,15 +209,6 @@ export const shareLinks = pgTable(
 /* ──────────────────────── notifications ──────────────────────── */
 
 export const NOTIFICATION_TYPES = [
-  'trigger_result',
-  'proactive_insight',
-  'daily_briefing',
-  'price_alert',
-  'integration_event',
-  'reminder',
-  'agent_task_complete',
-  'chat_response_ready',
-  'oxy_service',
   'mention',
   'comment_reply',
 ] as const;
@@ -225,10 +216,6 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const NOTIFICATION_CHANNELS = [
   'push',
-  'telegram',
-  'discord',
-  'whatsapp',
-  'slack',
   'in_app',
 ] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
@@ -278,21 +265,6 @@ export const notifications = pgTable(
     deliveryStatus: jsonb().notNull().default({}),
     status: text().notNull().default('pending'),
     priority: text().notNull().default('normal'),
-    /**
-     * Written by `sendNotification` when a caller passes one. `ref: 'Trigger'`
-     * in Mongo, pointing at a model that does NOT exist in this repository —
-     * so it never resolved and nothing populates it. Ported as plain `text`
-     * with no reference, which is what it always was in practice.
-     */
-    triggerId: text(),
-    conversationId: text(),
-    /**
-     * WRITE-ONLY as of this port: `sendNotification` accepts and stores it and
-     * no read path filters on it (grepped repo-wide). It is NOT an expiry
-     * mechanism and has no sweep entry — registering one would start deleting
-     * rows on a field nothing has ever honoured.
-     */
-    expiresAt: timestamptz(),
     readAt: timestamptz(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

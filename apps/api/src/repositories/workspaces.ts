@@ -16,7 +16,7 @@ import {
   workspaces,
   type WorkspaceRole,
 } from '../db/schema/workspaces.js';
-import type { PgHandle } from './handle.js';
+import type { PgHandle } from '../db/client.js';
 
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;

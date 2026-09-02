@@ -44,7 +44,13 @@ describe('the Station runtime stays PostgreSQL-only', () => {
       ),
     );
 
-    expect(sourceFiles.length).toBeGreaterThan(100);
+    expect(sourceFiles.length).toBeGreaterThan(50);
+    expect(sourceFiles).toEqual(expect.arrayContaining([
+      'apps/api/src/index.ts',
+      'apps/api/src/db/client.ts',
+      'apps/api/src/db/schema/index.ts',
+      'apps/api/src/routes/workspaces.ts',
+    ]));
     expect(drizzleImporters.length).toBeGreaterThan(10);
     expect(mongoImports()).toEqual([]);
   });
@@ -64,6 +70,42 @@ describe('the Station runtime stays PostgreSQL-only', () => {
 });
 
 describe('the checked-in public surfaces describe routes that exist', () => {
+  it('requires an explicit API origin for every web build', () => {
+    const config = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/lib/config.ts'),
+      'utf8',
+    );
+    const deploy = readFileSync(
+      resolve(REPOSITORY_ROOT, '.github/workflows/deploy.yml'),
+      'utf8',
+    );
+
+    expect(config).toContain("throw new Error('EXPO_PUBLIC_API_URL is required')");
+    expect(config).not.toContain('api.station.oxy.so');
+    expect(deploy).toContain('EXPO_PUBLIC_API_URL: ${{ vars.STATION_API_URL }}');
+    expect(deploy).not.toContain('api.station.oxy.so');
+    expect(
+      readFileSync(resolve(REPOSITORY_ROOT, 'apps/api/src/routes/share-links.ts'), 'utf8'),
+    ).not.toContain("|| 'https://station.oxy.so'");
+  });
+
+  it('binds notification sockets to the server-validated Oxy session', () => {
+    const serverSocket = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/api/src/socket.ts'),
+      'utf8',
+    );
+    const clientSocket = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/lib/hooks/use-notification-setup.ts'),
+      'utf8',
+    );
+
+    expect(serverSocket).toContain('io.use(oxyClient.authSocket())');
+    expect(serverSocket).toContain('socket.data.userId');
+    expect(serverSocket).not.toContain("socket.on('subscribe-notifications'");
+    expect(clientSocket).toContain('oxyServices.getAccessToken()');
+    expect(clientSocket).not.toContain("socket.emit('subscribe-notifications'");
+  });
+
   it('generates a sitemap containing only Station routes that are present', () => {
     const generator = readFileSync(
       resolve(REPOSITORY_ROOT, 'apps/app/scripts/generate-sitemap.ts'),
@@ -107,21 +149,12 @@ describe('the checked-in public surfaces describe routes that exist', () => {
     expect(indexSource).not.toMatch(/app\.use\(['"]\/webhooks['"]/);
   });
 
-  it('documents only the named events emitted by the current chat handler', () => {
-    const chatDocs = readFileSync(resolve(REPOSITORY_ROOT, 'docs/chat-api.mdx'), 'utf8');
-    const handler = readFileSync(
-      resolve(REPOSITORY_ROOT, 'apps/api/src/routes/v1/chat-completions.ts'),
-      'utf8',
-    );
-    const documentedEvents = [...chatDocs.matchAll(/`(oxystation\.[a-z_]+)`/g)]
-      .map((match) => match[1]);
-    const emittedEvents = [...handler.matchAll(/event: (oxystation\.[a-z_]+)/g)]
-      .map((match) => match[1]);
+  it('mounts the workspace API without retired inference route groups', () => {
+    const indexSource = readFileSync(resolve(REPOSITORY_ROOT, 'apps/api/src/index.ts'), 'utf8');
 
-    expect(documentedEvents.length).toBeGreaterThan(0);
-    expect(emittedEvents.length).toBeGreaterThan(0);
-    expect(new Set(documentedEvents)).toEqual(new Set(emittedEvents));
-    expect(chatDocs).not.toContain('event: clarity.');
-    expect(chatDocs).not.toContain('deepResearch?:');
+    expect(indexSource).toContain("app.use('/workspaces', workspacesRouter)");
+    expect(indexSource).toContain("app.use('/pages', pagesRouter)");
+    expect(indexSource).toContain("app.use('/databases', databasesRouter)");
+    expect(indexSource).not.toMatch(/app\.use\(['"]\/(?:v1|clarity|conversations|billing|credits|models|analytics|internal)/u);
   });
 });

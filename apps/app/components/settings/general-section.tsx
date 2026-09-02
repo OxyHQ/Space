@@ -30,17 +30,17 @@ const AppMiniature = React.memo(function AppMiniature({ variant, colorName }: { 
       </View>
       {/* Main content */}
       <View className="flex-1 bg-background justify-between">
-        {/* Chat header */}
+        {/* Document toolbar */}
         <View className="flex-row items-center justify-between px-1 py-0.5">
           <View className="h-[2px] w-1/4 rounded-full bg-border" />
           <View className="h-[2px] w-2 rounded-full bg-border" />
         </View>
-        {/* Greeting */}
+        {/* Document title */}
         <View className="items-center gap-0.5">
           <View className="h-[2px] w-3/5 rounded-full bg-muted-foreground" />
           <View className="h-[1px] w-2/5 rounded-full bg-border" />
         </View>
-        {/* Suggestion cards 2x2 */}
+        {/* Page blocks */}
         <View className="gap-[2px] px-1">
           <View className="flex-row gap-[2px]">
             <View className="flex-1 h-1.5 rounded-sm bg-muted" />
@@ -51,7 +51,7 @@ const AppMiniature = React.memo(function AppMiniature({ variant, colorName }: { 
             <View className="flex-1 h-1.5 rounded-sm bg-muted" />
           </View>
         </View>
-        {/* Input bar */}
+        {/* Document status */}
         <View className="px-1 pb-0.5 gap-[2px]">
           <View className="flex-row gap-[2px]">
             <View className="h-1 w-3 rounded-full bg-primary/50" />

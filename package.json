@@ -2,7 +2,7 @@
   "name": "oxystation-monorepo",
   "version": "1.0.0",
   "license": "SEE LICENSE IN LICENSE",
-  "description": "Oxy Station - workspace for docs, databases, and AI",
+  "description": "Oxy Station - workspace for documents and databases",
   "private": true,
   "workspaces": [
     "apps/api",
@@ -32,7 +32,6 @@
   ],
   "author": "",
   "devDependencies": {
-    "sst": "^4.7.0",
     "typescript": "^5.9.3"
   },
   "overrides": {

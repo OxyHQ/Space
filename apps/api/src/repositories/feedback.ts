@@ -10,7 +10,7 @@
 
 import { and, desc, eq } from 'drizzle-orm';
 import type { StationDatabase } from '../db/client.js';
-import { feedback } from '../db/schema/billing.js';
+import { feedback } from '../db/schema/feedback.js';
 
 export type FeedbackRow = typeof feedback.$inferSelect;
 

@@ -1,40 +1,21 @@
 # Oxy Station App
 
-Expo client for Oxy Station — web, iOS, and Android.
-
-## Tech
-
-- Expo 55 / React Native 0.83
-- expo-router (file-based routing)
-- NativeWind (Tailwind for RN)
-- Zustand, TanStack Query
-- OxyHQ auth (`@oxyhq/services`)
+Expo client for the Station workspace on web, iOS, and Android.
 
 ## Development
 
 ```bash
-# from repo root
-bun run dev:app
-
-# from apps/app
+cp .env.example .env
 bun start
-```
-
-Platform targets:
-
-```bash
 bun run web
 bun run ios
 bun run android
 ```
 
-## API Config
+`EXPO_PUBLIC_API_URL` is required and must name the API origin for the build.
+There is no checked-in production fallback because no public Station API is
+currently deployed.
 
-Configured in `apps/app/lib/config.ts`.
-
-Expected production API: `https://api.station.oxy.so`
-
-## Notes
-
-- This pass is the brand pivot from the legacy chat product to a Notion-like workspace shell. Pages, databases, and blocks land in later phases.
-- Internal AI provider routing remains (Phase 5, internal only) and is not exposed in the UI.
+The app contains workspace pages, databases, comments, sharing, notifications,
+and settings. It does not contain provider SDKs, provider credentials, billing
+credits, or legacy chat/Clarity surfaces.

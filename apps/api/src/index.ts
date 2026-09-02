@@ -11,16 +11,7 @@ import { isAbortError, isFatalError, isTransientNetworkError } from './lib/error
 
 // Routes
 import healthRouter from './routes/health.js';
-import authRouter from './routes/auth.js';
-import conversationsRouter from './routes/conversations.js';
-import chatRouter from './routes/chat.js';
-import creditsRouter from './routes/credits.js';
-import v1Router from './routes/v1.js';
-import billingRouter from './routes/billing.js';
 import feedbackRouter from './routes/feedback.js';
-import modelsStatsRouter from './routes/models-stats.js';
-import internalRouter from './routes/internal.js';
-import analyticsRouter from './routes/analytics.js';
 import notificationsRouter from './routes/notifications.js';
 import workspacesRouter from './routes/workspaces.js';
 import shareLinksRouter from './routes/share-links.js';
@@ -31,9 +22,6 @@ import commentsRouter from './routes/comments.js';
 import uploadsRouter, { LOCAL_UPLOAD_ROOT } from './routes/uploads.js';
 import embedRouter from './routes/embed.js';
 
-// Register hooks (side-effect import)
-import './lib/hooks/index.js';
-import { warmupProviders } from './lib/provider-warmup.js';
 // Socket.io
 import { initSocket } from './socket.js';
 
@@ -47,13 +35,11 @@ dotenv.config({ path: join(__dirname, '../.env') });
 const app = express();
 const PORT = parseInt(process.env.PORT || '4001', 10);
 
-// Create HTTP server with optimized settings for streaming
+// Create the HTTP server.
 const server = http.createServer({
-  // Increase max header size for long authentication tokens
   maxHeaderSize: 16384,
-  // Keep connections alive for SSE
   keepAlive: true,
-  keepAliveTimeout: 65000, // Slightly higher than default
+  keepAliveTimeout: 65000,
 }, app);
 
 // Handle HTTP server errors (e.g. EADDRINUSE)
@@ -65,35 +51,16 @@ server.on('error', (error: NodeJS.ErrnoException) => {
   }
 });
 
-// Optimize server for SSE streaming
 server.on('connection', (socket) => {
-  // Disable Nagle's algorithm for all connections to reduce latency
   socket.setNoDelay(true);
-  // Set keep-alive
   socket.setKeepAlive(true, 60000);
 });
 
 initSocket(server);
 
-// Public API routes (/v1) - allow all origins (like OpenAI's API)
-app.use('/v1', cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Service-Name', 'X-Timestamp', 'X-Signature', 'X-Session-Id', 'X-Device-Info'],
-  optionsSuccessStatus: 200
-}));
-
-// Disable nginx/proxy buffering for /v1 SSE streaming responses
-app.use('/v1', (_req, res, next) => {
-  res.setHeader('X-Accel-Buffering', 'no');
-  next();
-});
-
 // Internal routes - restricted to known origins
 const PRODUCTION_ORIGINS = [
   'https://station.oxy.so',
-  'https://console.station.oxy.so',
-  'https://gateway.station.oxy.so',
 ];
 
 const DEV_ORIGINS = [
@@ -110,9 +77,7 @@ const allowedOrigins = [
   ...DEV_ORIGINS,
 ];
 
-// Internal routes CORS - skip /v1 routes (they have their own permissive CORS above)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/v1')) return next();
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps or curl)
@@ -126,7 +91,7 @@ app.use((req, res, next) => {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Service-Name', 'X-Timestamp', 'X-Signature', 'X-Session-Id', 'X-Device-Info', 'X-Oxy-User-Id', 'X-Workspace-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Device-Info', 'X-Workspace-Id'],
     optionsSuccessStatus: 200,
   })(req, res, next);
 });
@@ -137,38 +102,13 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Stripe webhook needs raw body for signature verification
-app.use('/billing/webhook', express.raw({ type: 'application/json' }));
-
-// Increase body size limit for large chat contexts
+// Block payloads and database properties may contain structured document data.
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Optimize SSE routes for real-time streaming
-app.use('/clarity/search', (_req, res, next) => {
-  // Disable all buffering for SSE
-  res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
-
-  // Disable Nagle's algorithm for lower latency
-  if (res.socket) {
-    res.socket.setNoDelay(true);
-    res.socket.setTimeout(0); // No timeout for SSE connections
-  }
-
-  next();
-});
-
 // Routes
 app.use('/health', healthRouter);
-app.use('/auth', authRouter);
-app.use('/conversations', conversationsRouter);
-app.use('/credits', creditsRouter);
-app.use('/clarity/search', chatRouter);
-app.use('/v1', v1Router);
-app.use('/billing', billingRouter);
 app.use('/feedback', feedbackRouter);
-app.use('/models', modelsStatsRouter);
-app.use('/analytics', analyticsRouter);
 app.use('/notifications', notificationsRouter);
 app.use('/workspaces', workspacesRouter);
 app.use(shareLinksRouter);
@@ -180,7 +120,6 @@ app.use('/uploads', uploadsRouter);
 app.use('/embed', embedRouter);
 // Serve local-disk uploads (only used when Spaces creds are not configured)
 app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT, { fallthrough: true }));
-app.use('/internal', internalRouter);
 
 // Root route
 app.get('/', (_req, res) => {
@@ -189,15 +128,7 @@ app.get('/', (_req, res) => {
     version: '1.0.0',
     endpoints: [
       '/health',
-      '/auth',
-      '/conversations',
-      '/credits',
-      '/clarity/search',
-      '/v1',
-      '/billing',
       '/feedback',
-      '/models',
-      '/analytics',
       '/notifications',
       '/workspaces',
       '/pages',
@@ -208,13 +139,12 @@ app.get('/', (_req, res) => {
       '/embed',
       '/share-links',
       '/share/:token',
-      '/internal',
     ]
   });
 });
 
 // Error handler
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   log.general.error({ err }, 'Unhandled Express error');
   if (!res.headersSent) {
     res.status(500).json({ error: 'Something went wrong!' });
@@ -234,7 +164,7 @@ process.on('unhandledRejection', (reason) => {
     return;
   }
 
-  // Transient network: ECONNRESET, ETIMEDOUT, etc. — expected with external providers
+  // Transient network: ECONNRESET, ETIMEDOUT, etc. — expected with external services
   if (isTransientNetworkError(reason)) {
     log.general.warn({ err: reason }, '[Process] Transient network error (continuing)');
     return;
@@ -260,8 +190,6 @@ getDb()
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => {
       log.general.info({ port: PORT }, 'API server listening');
-      // Pre-warm TLS connections to AI providers (non-blocking)
-      warmupProviders().catch((err) => log.general.error({ err }, '[Warmup] Provider warmup error'));
       // Verify Redis connectivity (non-blocking)
       import('./lib/redis.js').then(({ getRedisClient }) => {
         const redis = getRedisClient();
@@ -324,7 +252,7 @@ getDb()
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   })
-  .catch((error) => {
-    console.error('Failed to connect to PostgreSQL:', error);
+  .catch((error: unknown) => {
+    log.general.error({ err: error }, 'Failed to connect to PostgreSQL');
     process.exit(1);
   });

@@ -51,7 +51,6 @@ function AppContent() {
           }}
         >
           <Stack.Screen name="(app)" options={{ headerShown: false }} />
-          <Stack.Screen name="(biglayout)" options={{ headerShown: false }} />
           <Stack.Screen name="share/[token]" options={{ headerShown: false }} />
         </Stack>
       </KeyboardProvider>

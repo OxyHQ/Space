@@ -1,52 +1,26 @@
-import { Platform } from 'react-native';
-
 /**
- * Centralized API configuration
- * Priority:
- * 1. EXPO_PUBLIC_API_URL environment variable (from .env)
- * 2. Fallback to environment-based defaults
+ * Centralized API configuration. Station has no implicit production API:
+ * every build must name the backend it is intended to call.
  */
+const apiUrl = process.env.EXPO_PUBLIC_API_URL;
 
-// Default API URLs for different environments
-export const DEV_API_BASE_URL = 'http://localhost:4001';
-export const STAGING_API_BASE_URL = 'https://staging-api.station.oxy.so';
-export const PROD_API_BASE_URL = 'https://api.station.oxy.so';
+if (!apiUrl) {
+  throw new Error('EXPO_PUBLIC_API_URL is required');
+}
 
-const ENV = {
-  dev: {
-    apiUrl: DEV_API_BASE_URL,
-  },
-  staging: {
-    apiUrl: STAGING_API_BASE_URL,
-  },
-  prod: {
-    apiUrl: PROD_API_BASE_URL,
-  },
+const parsedApiUrl = new URL(apiUrl);
+
+if (
+  !['http:', 'https:'].includes(parsedApiUrl.protocol) ||
+  parsedApiUrl.pathname !== '/' ||
+  parsedApiUrl.username ||
+  parsedApiUrl.password ||
+  parsedApiUrl.search ||
+  parsedApiUrl.hash
+) {
+  throw new Error('EXPO_PUBLIC_API_URL must be an HTTP(S) origin without path, credentials, query, or fragment');
+}
+
+export default {
+  apiUrl: parsedApiUrl.origin,
 };
-
-const getEnvVars = () => {
-  // Priority 1: Use EXPO_PUBLIC_API_URL if set in .env
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return {
-      apiUrl: process.env.EXPO_PUBLIC_API_URL,
-    };
-  }
-
-  // Priority 2: Use environment-based defaults
-  const env = __DEV__ ? 'development' : 'production';
-
-  if (env === 'production') {
-    return ENV.prod;
-  }
-
-  // For web platform in development, always use localhost
-  if (Platform.OS === 'web' && __DEV__) {
-    return {
-      apiUrl: DEV_API_BASE_URL,
-    };
-  }
-
-  return ENV.dev;
-};
-
-export default getEnvVars();

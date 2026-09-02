@@ -167,9 +167,9 @@ beforeAll(async () => {
   //
   // The previous value is captured because `afterAll` puts it back. The forks
   // pool can reuse one process across files, so the assignment can outlive
-  // this file — and `repositories/handle.ts`'s `resolveHandle()` falls back to
-  // `getDb()`, which THROWS while `DATABASE_URL` is unset and silently opens a
-  // pool once it is set. So leaving it set would change what a sibling file
+  // this file — and the mounted routes call `getDb()`, which throws while
+  // `DATABASE_URL` is unset and opens a pool once it is set. Leaving it set
+  // would therefore change what a sibling file
   // does on a code path this file has no business touching. That is the
   // argument; it is not a diagnosis of any observed failure.
   previousDatabaseUrl = process.env.DATABASE_URL;

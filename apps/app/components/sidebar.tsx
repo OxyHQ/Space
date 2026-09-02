@@ -96,14 +96,6 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
     router.replace("/(app)");
   }, [router, logout]);
   const handleLogin = React.useCallback(() => openAccountDialog(), []);
-  const handleUpgrade = React.useCallback(
-    () => router.push("/(biglayout)/subscribe"),
-    [router],
-  );
-  const handleBilling = React.useCallback(
-    () => router.push("/(app)/settings/usage"),
-    [router],
-  );
   const handleNotifications = React.useCallback(
     () => router.push("/(app)/notifications"),
     [router],
@@ -323,22 +315,10 @@ const WorkspaceSidebar = React.memo(function WorkspaceSidebar() {
                 <DropdownMenu.Label>{displayName}</DropdownMenu.Label>
               )}
               <DropdownMenu.Separator />
-              <DropdownMenu.Item key="upgrade" onSelect={handleUpgrade}>
-                <DropdownMenu.ItemIcon ios={{ name: "sparkle" }} />
-                <DropdownMenu.ItemTitle>
-                  {t("sidebar.upgradeToPro")}
-                </DropdownMenu.ItemTitle>
-              </DropdownMenu.Item>
               <DropdownMenu.Item key="account" onSelect={handleAccount}>
                 <DropdownMenu.ItemIcon ios={{ name: "person.circle" }} />
                 <DropdownMenu.ItemTitle>
                   {t("sidebar.account")}
-                </DropdownMenu.ItemTitle>
-              </DropdownMenu.Item>
-              <DropdownMenu.Item key="billing" onSelect={handleBilling}>
-                <DropdownMenu.ItemIcon ios={{ name: "creditcard" }} />
-                <DropdownMenu.ItemTitle>
-                  {t("sidebar.billing")}
                 </DropdownMenu.ItemTitle>
               </DropdownMenu.Item>
               <DropdownMenu.Item key="notifications" onSelect={handleNotifications}>

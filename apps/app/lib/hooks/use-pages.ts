@@ -127,7 +127,7 @@ export function useUpdatePage() {
 interface DeletePageInput {
   id: string;
   workspaceId: string;
-  /** When true, permanently delete from MongoDB (owner only). */
+  /** When true, permanently delete from PostgreSQL (owner only). */
   hard?: boolean;
 }
 
@@ -154,7 +154,7 @@ export function useDeletePage() {
 
 /**
  * Server-side duplicate (POST /pages/:id/duplicate). The backend copies the
- * page + its blocks and returns the new page document.
+ * page and its blocks and returns the new page.
  */
 export function useDuplicatePage() {
   const queryClient = useQueryClient();

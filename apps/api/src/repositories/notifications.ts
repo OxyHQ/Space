@@ -46,9 +46,6 @@ export interface NotificationRow {
   deliveryStatus: NotificationDeliveryStatus;
   status: NotificationStatus;
   priority: NotificationPriority;
-  triggerId: string | null;
-  conversationId: string | null;
-  expiresAt: Date | null;
   readAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -64,9 +61,6 @@ export interface CreateNotificationInput {
   deliveryStatus: NotificationDeliveryStatus;
   status: NotificationStatus;
   priority: NotificationPriority;
-  triggerId?: string;
-  conversationId?: string;
-  expiresAt?: Date;
 }
 
 export interface ListNotificationsFilter {
@@ -89,9 +83,6 @@ function toNotificationRow(
     deliveryStatus: row.deliveryStatus as NotificationDeliveryStatus,
     status: row.status as NotificationStatus,
     priority: row.priority as NotificationPriority,
-    triggerId: row.triggerId,
-    conversationId: row.conversationId,
-    expiresAt: row.expiresAt,
     readAt: row.readAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -206,9 +197,6 @@ export async function createNotification(
       status: input.status,
       priority: input.priority,
       ...(input.data !== undefined ? { data: input.data } : {}),
-      ...(input.triggerId !== undefined ? { triggerId: input.triggerId } : {}),
-      ...(input.conversationId !== undefined ? { conversationId: input.conversationId } : {}),
-      ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
     })
     .returning();
   const row = rows[0];

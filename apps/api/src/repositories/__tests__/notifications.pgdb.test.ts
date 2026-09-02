@@ -56,7 +56,6 @@ async function backdate(id: string, createdAt: Date): Promise<void> {
 
 describe('notifications repository', () => {
   it('round-trips every column the writer sets', async () => {
-    const expiresAt = new Date('2026-12-01T00:00:00.000Z');
     const created = await newNotification({
       type: 'comment_reply',
       title: 'New reply',
@@ -66,9 +65,6 @@ describe('notifications repository', () => {
       deliveryStatus: { in_app: 'pending', push: 'pending' },
       status: 'sent',
       priority: 'high',
-      triggerId: `${scope}-trigger`,
-      conversationId: `${scope}-conversation`,
-      expiresAt,
     });
 
     const read = await findNotificationById(db, created.id);
@@ -82,19 +78,13 @@ describe('notifications repository', () => {
       deliveryStatus: { in_app: 'pending', push: 'pending' },
       status: 'sent',
       priority: 'high',
-      triggerId: `${scope}-trigger`,
-      conversationId: `${scope}-conversation`,
-      expiresAt,
       readAt: null,
     });
   });
 
-  it('leaves omitted optional fields null rather than writing undefined', async () => {
+  it('leaves optional data null rather than writing undefined', async () => {
     const created = await newNotification();
     expect(created.data).toBeNull();
-    expect(created.triggerId).toBeNull();
-    expect(created.conversationId).toBeNull();
-    expect(created.expiresAt).toBeNull();
   });
 
   describe('feed', () => {
@@ -113,9 +103,9 @@ describe('notifications repository', () => {
     it('filters by status and by type', async () => {
       const filterUser = `${scope}-filter`;
       const mention = await newNotification({ oxyUserId: filterUser, type: 'mention' });
-      const reminder = await newNotification({
+      const reply = await newNotification({
         oxyUserId: filterUser,
-        type: 'reminder',
+        type: 'comment_reply',
         status: 'read',
       });
 
@@ -128,7 +118,7 @@ describe('notifications repository', () => {
         (await listNotifications(db, { oxyUserId: filterUser, status: 'read' }, 30, 0)).map(
           (n) => n.id,
         ),
-      ).toEqual([reminder.id]);
+      ).toEqual([reply.id]);
     });
 
     /**
@@ -141,7 +131,7 @@ describe('notifications repository', () => {
       const countUser = `${scope}-count`;
       await newNotification({ oxyUserId: countUser, type: 'mention' });
       await newNotification({ oxyUserId: countUser, type: 'mention' });
-      await newNotification({ oxyUserId: countUser, type: 'reminder' });
+      await newNotification({ oxyUserId: countUser, type: 'comment_reply' });
 
       const filter = { oxyUserId: countUser, type: 'mention' as const };
       const total = await countNotifications(db, filter);
@@ -257,7 +247,7 @@ describe('notifications repository', () => {
      * `updateOne` on a `{ timestamps: true }` schema, so the source document IS
      * modified on the second dismiss too.
      */
-    it('a second dismiss still reports one row, as mongoose did', async () => {
+    it('a second dismiss still reports one matched row', async () => {
       const created = await newNotification({ status: 'sent' });
       expect(await dismissNotification(db, created.id, userId)).toBe(1);
       expect(await dismissNotification(db, created.id, userId)).toBe(1);
@@ -305,7 +295,7 @@ describe('notifications repository', () => {
      * too — and asserted so that a later "tighten it to require at least one"
      * has to be a decision rather than a drive-by.
      */
-    it('accepts an empty channel list, as Mongo did', async () => {
+    it('accepts an empty channel list', async () => {
       const created = await newNotification({ channels: [] });
       expect(created.channels).toEqual([]);
     });
@@ -335,7 +325,7 @@ describe('notifications repository', () => {
       Date.now() - (NOTIFICATION_DISMISSED_RETENTION_SECONDS + 86_400) * 1000,
     );
 
-    it('registers the retention the Mongo TTL index declared', () => {
+    it('registers the declared retention', () => {
       expect(NOTIFICATION_EXPIRY_TARGET.retentionSeconds).toBe(90 * 24 * 60 * 60);
       expect(NOTIFICATION_EXPIRY_TARGET.column).toBe(notifications.dismissedReapAt);
     });

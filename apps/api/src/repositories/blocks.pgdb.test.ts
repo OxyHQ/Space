@@ -14,7 +14,7 @@ import {
   testScope,
   type TestDatabase,
 } from '../db/__tests__/testDatabase.js';
-import { blocks, BLOCK_TYPES, pages } from '../db/schema/pages.js';
+import { blocks, pages } from '../db/schema/pages.js';
 import { createPage, deletePageTree } from './pages.js';
 import {
   createBlock,

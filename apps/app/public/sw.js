@@ -5,7 +5,7 @@
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
   event.waitUntil(
-    self.registration.showNotification(data.title || 'Alia', {
+    self.registration.showNotification(data.title || 'Oxy Station', {
       body: data.body || '',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
@@ -17,7 +17,9 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification.data;
-  const url = data?.conversationId ? `/c/${data.conversationId}` : '/';
+  const url = typeof data?.pageId === 'string'
+    ? `/p/${encodeURIComponent(data.pageId)}`
+    : '/notifications';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       // Prefer a focused/visible tab, then any matching tab
