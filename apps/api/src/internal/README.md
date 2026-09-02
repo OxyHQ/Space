@@ -33,9 +33,10 @@ Main API (Port 4001)
 The module provides a multi-layer failover system for AI provider requests:
 
 **Key Manager** (`lib/key-manager.ts`, transitional):
-- Reads the local `provider_keys` table with no environment fallback. Do not
-  provision it: provider credentials belong to Kaana, and Hub AI must move to
-  Alia -> Oxy -> Kaana.
+- Reads the local `provider_keys` table, then falls back to the existing
+  provider environment variables when no row is available.
+- This is a frozen availability bridge. Hub AI must move through
+  Alia -> Oxy -> Kaana before the local table and fallback are deleted.
 - 10-second cache TTL to minimize stale-key window
 - Rate-limit checks for rps/rpm/rph/rpd and tps/tpm/tph/tpd
 - Credit limit enforcement (`spentUSD >= creditLimitUSD` → skip)
@@ -51,7 +52,7 @@ The module provides a multi-layer failover system for AI provider requests:
   - `billing` → skip provider, mark key credit-exhausted
   - `provider_unavailable` → skip provider entirely (geo-restriction, service down)
   - `format` / `content_filter` → stop (non-retryable)
-- Records `FallbackEvent` documents for analytics (fire-and-forget)
+- Records fallback-event rows for analytics (fire-and-forget)
 
 **Error Classification** (`../../lib/errors/failover-error.ts`):
 - Classifies unknown errors into `FailoverReason` categories

@@ -15,8 +15,9 @@ Oxy Station has not been renamed to `main`. Branch from `master`, and target `ma
 - **PostgreSQL 17**, local or remote, to run the API and its real-database suite.
 - **Redis or Valkey**, optional. Caching falls back gracefully without it.
 
-Do not add AI provider credentials to `.env`. Station's surviving provider
-runtime is transitional; Kaana is the credential owner.
+Station's surviving provider runtime still has an environment-key fallback.
+Treat it as a frozen availability bridge: do not add providers or another key
+source. It is removed only after Hub AI routes through Alia -> Oxy -> Kaana.
 
 ## Setup
 

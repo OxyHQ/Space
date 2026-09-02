@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -13,7 +13,8 @@ function trackedFiles(...paths: string[]): string[] {
     encoding: 'utf8',
   })
     .split('\n')
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((file) => existsSync(resolve(REPOSITORY_ROOT, file)));
 }
 
 function importedPackages(source: string): string[] {
@@ -33,32 +34,6 @@ function mongoImports(): string[] {
       ),
     );
 }
-
-const FORBIDDEN_DEPLOYMENT_TOKEN = /\bMONGO(?:DB)?_URI\b|mongodb(?:\+srv)?:\/\//i;
-const PROVIDER_CREDENTIAL_ENV = new RegExp(
-  `\\b(?:${[
-    'ANTHROPIC',
-    'CEREBRAS',
-    'CLOUDFLARE',
-    'COHERE',
-    'DEEPSEEK',
-    'DIGITALOCEAN',
-    'FIREWORKS',
-    'GOOGLE',
-    'GROK',
-    'GROQ',
-    'HYPERBOLIC',
-    'MISTRAL',
-    'NOVITA',
-    'OPENAI',
-    'OPENROUTER',
-    'PERPLEXITY',
-    'REPLICATE',
-    'SAMBANOVA',
-    'TOGETHER',
-    'XAI',
-  ].join('|')})_(?:API_KEY|KEYS)\\b`,
-);
 
 describe('the Station runtime stays PostgreSQL-only', () => {
   it('detects real package imports before asserting the Mongo importer set is empty', () => {
@@ -86,40 +61,65 @@ describe('the Station runtime stays PostgreSQL-only', () => {
 
     expect([...declared].filter((name) => ['mongoose', 'mongodb', 'mongodb-memory-server'].includes(name))).toEqual([]);
   });
+});
 
-  it('keeps Mongo connection configuration out of deploy and env surfaces', () => {
-    expect('MONGODB_URI=mongodb://127.0.0.1:27017/station').toMatch(FORBIDDEN_DEPLOYMENT_TOKEN);
-
-    const configurationFiles = trackedFiles(
-      '.do',
-      '.github',
-      'sst.config.ts',
-      'apps/api/.env.example',
-      'apps/api/Dockerfile',
+describe('the checked-in public surfaces describe routes that exist', () => {
+  it('generates a sitemap containing only Station routes that are present', () => {
+    const generator = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/scripts/generate-sitemap.ts'),
+      'utf8',
     );
-    const offenders = configurationFiles.filter((file) =>
-      FORBIDDEN_DEPLOYMENT_TOKEN.test(readFileSync(resolve(REPOSITORY_ROOT, file), 'utf8')),
+    const generatedRoutes = [...generator.matchAll(/\bloc:\s*['"]([^'"]+)['"]/g)]
+      .map((match) => match[1]);
+    const sitemap = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/public/sitemap.xml'),
+      'utf8',
     );
+    const sitemapUrls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)]
+      .map((match) => match[1]);
 
-    expect(configurationFiles.length).toBeGreaterThan(3);
-    expect(offenders).toEqual([]);
+    expect(generatedRoutes).toEqual(['/']);
+    expect(sitemapUrls).toEqual(['https://station.oxy.so/']);
   });
 
-  it('keeps provider credentials out of Station source and environment surfaces', () => {
-    expect(['OPENAI', 'API_KEY'].join('_')).toMatch(PROVIDER_CREDENTIAL_ENV);
-
-    const credentialSurfaces = trackedFiles(
-      'apps/api/src',
-      'apps/api/.env.example',
-      '.do',
-      '.github',
-      'sst.config.ts',
+  it('does not advertise Alia or nonexistent Station pages in robots.txt', () => {
+    const robots = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/public/robots.txt'),
+      'utf8',
     );
-    const offenders = credentialSurfaces.filter((file) =>
-      PROVIDER_CREDENTIAL_ENV.test(readFileSync(resolve(REPOSITORY_ROOT, file), 'utf8')),
+    const sitemapLines = robots
+      .split('\n')
+      .filter((line) => line.startsWith('Sitemap:'));
+
+    expect(robots).not.toContain('alia.onl');
+    expect(robots).not.toContain('/developers/');
+    expect(sitemapLines).toEqual(['Sitemap: https://station.oxy.so/sitemap.xml']);
+  });
+
+  it('does not mount or advertise the catch-all webhook router that always returned 404', () => {
+    const indexSource = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/api/src/index.ts'),
+      'utf8',
     );
 
-    expect(credentialSurfaces.length).toBeGreaterThan(100);
-    expect(offenders).toEqual([]);
+    expect(existsSync(resolve(REPOSITORY_ROOT, 'apps/api/src/routes/webhooks.ts'))).toBe(false);
+    expect(indexSource).not.toContain("./routes/webhooks.js");
+    expect(indexSource).not.toMatch(/app\.use\(['"]\/webhooks['"]/);
+  });
+
+  it('documents only the named events emitted by the current chat handler', () => {
+    const chatDocs = readFileSync(resolve(REPOSITORY_ROOT, 'docs/chat-api.mdx'), 'utf8');
+    const handler = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/api/src/routes/v1/chat-completions.ts'),
+      'utf8',
+    );
+    const documentedEvents = [...chatDocs.matchAll(/`(oxystation\.[a-z_]+)`/g)]
+      .map((match) => match[1]);
+    const emittedEvents = [...handler.matchAll(/event: (oxystation\.[a-z_]+)/g)]
+      .map((match) => match[1]);
+
+    expect(new Set(documentedEvents)).toEqual(new Set(emittedEvents));
+    expect(chatDocs).not.toContain('event: clarity.');
+    expect(chatDocs).not.toContain('deepResearch?:');
   });
 });

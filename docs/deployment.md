@@ -1,125 +1,73 @@
-# Deployment Guide
+# Deployment status
 
-Last updated: 2026-04-10
+Last verified from source: 2026-09-02
 
-This guide covers production deployment for Oxy Station. Infrastructure is defined as code using [SST](https://sst.dev) with DigitalOcean and Cloudflare providers.
+Station is not deployable from the checked-in DigitalOcean specifications yet.
+Do not apply `sst.config.ts` or `.do/app.yaml` until the blockers below are
+resolved against the live DigitalOcean app.
 
-## Infrastructure as Code (SST)
+## Confirmed source/runtime contract
 
-All infrastructure is defined in `sst.config.ts` at the repo root. SST manages:
+- The API requires `DATABASE_URL` and executes `select 1` before listening.
+- Schema and migrations are PostgreSQL/Drizzle under `apps/api/src/db/` and
+  `apps/api/src/drizzle/`.
+- Valkey is optional for local development and used for cache, rate limits and
+  Socket.IO scale-out when present.
+- The local AI provider bridge still reads `provider_keys` and existing
+  provider environment variables. It is removed only after Hub AI routes
+  through Alia -> Oxy -> Kaana.
 
-- **DO App Platform**: API service + static frontend
-- **DO Spaces**: File storage bucket (`bucket-oxystation`)
-- **Domains**: station.oxy.so, api.station.oxy.so
+## Blocking mismatches in both specifications
 
-PostgreSQL is supplied as the `DATABASE_URL` App Platform secret. Valkey is
-referenced by cluster name and managed externally.
+The checked-in `.do/app.yaml` and `sst.config.ts` are legacy declarations, not
+an apply-ready source of truth:
 
-### Prerequisites
+1. They point production at branch `main`, but this repository's default and
+   only release branch is `master`.
+2. They inject a Mongo connection and do not bind the `DATABASE_URL` required
+   by the current API process.
+3. Replacing that entry with an empty `SECRET` declaration does not provision a
+   PostgreSQL database or prove the secret already exists in App Platform.
 
-```bash
-bun add -d sst    # Already in devDependencies
-```
+Changing only the branch could activate `deploy_on_push` against a process that
+cannot boot, so branch and database wiring must be reviewed as one production
+change after the real app and database IDs are known.
 
-Set credentials:
+## Required read-only discovery
 
-```bash
-export DIGITALOCEAN_TOKEN=dop_v1_...
-export SPACES_ACCESS_KEY_ID=...
-export SPACES_SECRET_ACCESS_KEY=...
-export CLOUDFLARE_API_TOKEN=...
-```
+Before the infrastructure PR:
 
-### Deploy
+1. Read the live App Platform app ID, spec and active deployment.
+2. Resolve the PostgreSQL cluster, database, user and connection binding that
+   Station will use; do not guess names.
+3. Confirm how the current `DATABASE_URL` is stored and whether updating the
+   spec preserves its secret value.
+4. Compare live domains and Spaces resources with the checked-in names.
+5. Produce the complete spec diff before applying anything.
 
-```bash
-# Deploy to production
-bunx sst deploy --stage production
+This environment had no DigitalOcean MCP, token file, token environment
+variable or `doctl`, so none of those live facts were available for this PR.
 
-# Deploy a dev/preview environment
-bunx sst deploy --stage dev
+## Local verification
 
-# Remove a non-production stage
-bunx sst remove --stage dev
-```
-
-### Stages
-
-| Stage | Behavior |
-|-------|----------|
-| `production` | 2x API instances, retains resources on removal, domains configured |
-| Any other | 1x API instance, removes all resources on cleanup, no custom domains |
-
-### Local Development
-
-```bash
-bunx sst dev    # Starts multiplexer with linked resources
-```
-
-## Preconditions
-
-- PostgreSQL reachable through `DATABASE_URL`.
-- Oxy auth service reachable.
-- Valkey (Redis) available for caching and rate limiting.
-
-## Database
-
-The database name is part of `DATABASE_URL`. The API performs `select 1` before
-opening the listener, so a missing or unreachable PostgreSQL database fails the
-deployment loudly.
-
-## Minimum Environment (API)
-
-These are configured in `sst.config.ts` and injected via DO App Platform:
+Run the API against PostgreSQL 17:
 
 ```bash
-PORT=8080
-NODE_ENV=production
-WEB_URL=https://station.oxy.so
-DATABASE_URL=<PostgreSQL connection string>
-REDIS_URL=<from db-valkey cluster>
-SERVICE_SECRET=<strong-secret>       # Set as SECRET in DO dashboard
+docker compose -f apps/api/docker-compose.postgres.yml up -d
+STATION_TEST_DATABASE_URL=postgres://station:station@127.0.0.1:5439/postgres \
+  bun run --filter @oxystation/api test:pgdb
+docker compose -f apps/api/docker-compose.postgres.yml down
 ```
 
-## Optional but Recommended
+Normal repository gates:
 
 ```bash
-# S3/Spaces (auto-configured by SST)
-AWS_REGION=ams3
-AWS_ACCESS_KEY_ID=<secret>
-AWS_SECRET_ACCESS_KEY=<secret>
-AWS_ENDPOINT_URL=https://ams3.digitaloceanspaces.com
-AWS_S3_BUCKET=bucket-oxystation
-
-# Stripe
-STRIPE_SECRET_KEY=<secret>
-STRIPE_WEBHOOK_SECRET=<secret>
-
-# LiveKit
-LIVEKIT_URL=wss://livekit.oxy.so
-LIVEKIT_API_KEY=<secret>
-LIVEKIT_API_SECRET=<secret>
+bun install
+git diff --exit-code -- bun.lock
+bun run --filter @oxystation/api lint
+bun run --filter @oxystation/api test
+bun run build:api
 ```
 
-## Startup Behavior
-
-On API boot, the server automatically:
-
-- Verifies PostgreSQL with a real query before listening.
-- Initializes Socket.IO.
-- Warms the transitional local AI provider caches. This is live migration debt,
-  not the target Hub AI architecture; Station must move that path to
-  Alia -> Oxy -> Kaana before the local provider runtime is removed.
-
-## Health Checks
-
-- `GET /health`
-
-## Rollback Strategy
-
-- Use `bunx sst deploy --stage production` to redeploy.
-- For DO App Platform, rollback is also available via the DO dashboard.
-
-## Legacy Reference
-
-The `.do/app.yaml` file is kept as a reference for the DO App Platform spec but is no longer the source of truth. All infrastructure changes should go through `sst.config.ts`.
+No deploy or rollback command belongs in this guide until the production
+binding has been discovered and the infrastructure mismatch is fixed.

@@ -34,10 +34,12 @@ fallback.
 
 Do NOT use legacy chat vocabulary (conversation, message, thread, role/persona, agent, skill, deep research, follow-up) in user-facing copy.
 
-## AI boundary
+## AI boundary and transition
 
 Hub AI is an Alia agent flow; Alia reaches inference through Oxy and Kaana.
-Station does not own provider routing or provider credentials. The existing
-`apps/api/src/internal/providers/` tree is transition debt and must not be
-expanded. Provider names must never reach UI, public API responses, errors,
-SEO metadata, or docs.
+The existing `apps/api/src/internal/providers/` tree still owns local routing,
+`provider_keys` rows and an environment fallback; that is live transition debt,
+not the target architecture. Preserve its availability until the Alia/Oxy/Kaana
+path replaces all callers, but do not expand it or add providers. Provider
+names must never reach UI, public API responses, errors, SEO metadata, or public
+docs.

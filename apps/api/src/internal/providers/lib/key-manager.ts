@@ -2,11 +2,12 @@
  * Key Manager - Handles provider key loading, selection, and rate limiting
  * Uses dynamic priority rotation: failed keys move to end of queue
  *
- * Transitional local manager for rows in `provider_keys`.
+ * Supports two key sources:
+ * 1. PostgreSQL (production) — rows in `provider_keys`
+ * 2. Environment variables (development fallback) — e.g. DIGITALOCEAN_KEYS, GOOGLE_KEYS
  *
- * Provider credentials are never environment variables. The destination is
- * Kaana-owned credential storage; Station's local provider runtime remains only
- * until Hub AI is routed through Alia -> Oxy -> Kaana.
+ * When the database returns no keys for a provider, the manager falls back to
+ * comma-separated keys from the corresponding env var.
  */
 
 import { getDb } from '../../../db/client.js';
@@ -32,7 +33,14 @@ const TIMEOUT_PATTERN = /timeout|AbortError/i;
 const RATE_LIMIT_PATTERN = /rate.?limit|429|RESOURCE_EXHAUSTED|quota/i;
 
 /**
- * What the selection loop needs from a stored key.
+ * What the selection loop needs from a key, whichever source it came from.
+ *
+ * The source typed this `IProviderKey` and manufactured fake DOCUMENTS for the
+ * env fallback — a `_id` object with a `toString`, five stub methods, and an
+ * `as unknown as IProviderKey`. Naming the handful of fields the loop actually
+ * reads means the env branch constructs something real instead of something
+ * that merely type-checks, and it does not have to invent a `keyHash`,
+ * timestamps or counters that no reader looks at.
  */
 interface SelectableKey {
   id: string;
@@ -57,6 +65,17 @@ interface SelectableKey {
 const keyCache = new Map<string, { keys: SelectableKey[]; timestamp: number }>();
 const KEY_CACHE_TTL = 10000;
 
+/**
+ * An env-derived key carries this id prefix, and every write path below refuses
+ * an id that has it — there is no row to write to. It is the existing contract
+ * between these functions, which receive only a key id.
+ */
+const ENV_KEY_PREFIX = 'env-';
+
+function isEnvKeyId(keyId: string): boolean {
+  return keyId.startsWith(ENV_KEY_PREFIX);
+}
+
 function toSelectableKey(row: ProviderKeyRow): SelectableKey {
   return {
     id: row.id,
@@ -78,8 +97,55 @@ function toSelectableKey(row: ProviderKeyRow): SelectableKey {
   };
 }
 
+// ============== ENV-BASED KEY FALLBACK ==============
+
 /**
- * Load all locally stored keys for a provider.
+ * Map provider names to their environment variable names.
+ * Supports both _KEYS (multi-key, comma-separated) and _API_KEY (single key) formats.
+ */
+const PROVIDER_ENV_MAP: Record<string, string[]> = {
+  digitalocean: ['DIGITALOCEAN_KEYS', 'DIGITALOCEAN_API_KEY'],
+  google: ['GOOGLE_KEYS', 'GOOGLE_API_KEY'],
+  openai: ['OPENAI_KEYS', 'OPENAI_API_KEY'],
+  anthropic: ['ANTHROPIC_KEYS', 'ANTHROPIC_API_KEY'],
+  groq: ['GROQ_KEYS', 'GROQ_API_KEY'],
+  deepseek: ['DEEPSEEK_KEYS', 'DEEPSEEK_API_KEY'],
+  together: ['TOGETHER_KEYS', 'TOGETHER_API_KEY'],
+  cerebras: ['CEREBRAS_KEYS', 'CEREBRAS_API_KEY'],
+  mistral: ['MISTRAL_KEYS', 'MISTRAL_API_KEY'],
+  xai: ['XAI_KEYS', 'XAI_API_KEY'],
+  fireworks: ['FIREWORKS_KEYS', 'FIREWORKS_API_KEY'],
+  replicate: ['REPLICATE_KEYS', 'REPLICATE_API_KEY'],
+  cohere: ['COHERE_KEYS', 'COHERE_API_KEY'],
+  perplexity: ['PERPLEXITY_KEYS', 'PERPLEXITY_API_KEY'],
+  cloudflare: ['CLOUDFLARE_KEYS', 'CLOUDFLARE_API_KEY'],
+  openrouter: ['OPENROUTER_KEYS', 'OPENROUTER_API_KEY'],
+  sambanova: ['SAMBANOVA_KEYS', 'SAMBANOVA_API_KEY'],
+  hyperbolic: ['HYPERBOLIC_KEYS', 'HYPERBOLIC_API_KEY'],
+  novita: ['NOVITA_KEYS', 'NOVITA_API_KEY'],
+};
+
+/**
+ * Load keys from environment variables for a provider.
+ * Returns empty array if no env var is set.
+ */
+function loadEnvKeys(provider: string): string[] {
+  const envNames = PROVIDER_ENV_MAP[provider];
+  if (!envNames) return [];
+
+  for (const envName of envNames) {
+    const value = process.env[envName];
+    if (value && value.trim()) {
+      // Support comma-separated keys
+      return value.split(',').map(k => k.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+/**
+ * Load all available keys for a provider from Postgres.
+ * Falls back to environment variables when the database returns no keys.
  * Keys are sorted by: 1) Free first, then paid 2) currentPriority within each group
  */
 export async function loadProviderKeys(provider: string): Promise<SelectableKey[]> {
@@ -95,8 +161,42 @@ export async function loadProviderKeys(provider: string): Promise<SelectableKey[
   // JavaScript sorts is the query's `order by` now, with `id` as a tiebreak:
   // `Array.prototype.sort` is stable so equal-priority keys kept their fetch
   // order, and a Postgres sort has no such guarantee.
-  const rows = await listSelectableKeys(getDb(), provider);
-  const allKeys = rows.map(toSelectableKey);
+  let allKeys: SelectableKey[] = [];
+  try {
+    const rows = await listSelectableKeys(getDb(), provider);
+    allKeys = rows.map(toSelectableKey);
+  } catch (err) {
+    log.keys.warn({ err, provider }, 'Failed to query Postgres for keys, trying env fallback');
+  }
+
+  // If the database returned no keys, try environment variables
+  if (allKeys.length === 0) {
+    const envKeys = loadEnvKeys(provider);
+    if (envKeys.length > 0) {
+      log.keys.info({ provider, count: envKeys.length }, 'Using env-based keys (no DB keys found)');
+      const envKeyDocs: SelectableKey[] = envKeys.map((key, idx) => ({
+        id: `${ENV_KEY_PREFIX}${provider}-${idx}`,
+        provider,
+        key,
+        keyPrefix: key.substring(0, 8) + '...',
+        isPaid: false,
+        creditLimitUSD: null,
+        spentUSD: 0,
+        cooldownUntil: null,
+        rateLimitRps: null,
+        rateLimitRpm: null,
+        rateLimitRph: null,
+        rateLimitRpd: null,
+        rateLimitTps: null,
+        rateLimitTpm: null,
+        rateLimitTph: null,
+        rateLimitTpd: null,
+      }));
+
+      keyCache.set(cacheKey, { keys: envKeyDocs, timestamp: Date.now() });
+      return envKeyDocs;
+    }
+  }
 
   // Cache the results
   keyCache.set(cacheKey, { keys: allKeys, timestamp: Date.now() });
@@ -109,7 +209,8 @@ export async function loadProviderKeys(provider: string): Promise<SelectableKey[
  * Uses a single $facet aggregation to check all limits in one DB round-trip.
  */
 async function isKeyRateLimited(key: SelectableKey, tokens: number = 0): Promise<boolean> {
-  // No limits configured = not rate limited.
+  // No limits configured = not rate limited. Also the whole env-key case: those
+  // rows do not exist, so there is nothing to count against them.
   if (
     !key.rateLimitRps && !key.rateLimitRpm && !key.rateLimitRph && !key.rateLimitRpd &&
     !key.rateLimitTps && !key.rateLimitTpm && !key.rateLimitTph && !key.rateLimitTpd
@@ -245,7 +346,8 @@ export async function recordKeyUsage(
  * Record key success (resets failure counters, restores original priority, clears cooldown)
  */
 export async function recordKeySuccess(keyId: string): Promise<void> {
-  if (!keyId) return;
+  // Skip DB operations for env-based keys (they have no row)
+  if (!keyId || isEnvKeyId(keyId)) return;
 
   try {
     // The counters, the priority restore and the cooldown clear are one
@@ -267,7 +369,8 @@ export async function recordKeySuccess(keyId: string): Promise<void> {
  * Also sets exponential cooldown: 30s * 2^consecutiveFailures, max 30min
  */
 export async function recordKeyFailure(keyId: string, reason: string, retryAfterMs?: number): Promise<void> {
-  if (!keyId) return;
+  // Skip DB operations for env-based keys (they have no row)
+  if (!keyId || isEnvKeyId(keyId)) return;
 
   try {
     const db = getDb();
@@ -357,7 +460,7 @@ export async function getProviderKeyStats(provider: string): Promise<any> {
  * Record key spend (fire and forget) - increments spentUSD on the key
  */
 export async function recordKeySpend(keyId: string, costUSD: number): Promise<void> {
-  if (costUSD <= 0 || !keyId) return;
+  if (costUSD <= 0 || !keyId || isEnvKeyId(keyId)) return;
   recordSpend(getDb(), keyId, costUSD).catch((err) =>
     log.keys.error({ err }, 'Failed to update key spend'),
   );
@@ -367,7 +470,8 @@ export async function recordKeySpend(keyId: string, costUSD: number): Promise<vo
  * Mark a key as credit-exhausted (set spentUSD = creditLimitUSD)
  */
 export async function markKeyCreditExhausted(keyId: string): Promise<void> {
-  if (!keyId) return;
+  // Skip DB operations for env-based keys
+  if (!keyId || isEnvKeyId(keyId)) return;
 
   try {
     const db = getDb();

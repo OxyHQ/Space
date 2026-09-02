@@ -413,15 +413,14 @@ describe('rate-limit windows', () => {
   });
 
   /**
-   * A caller can still race a key deletion and present an id that no longer
-   * exists. Without the foreign key Postgres would store the dangling id
-   * happily — turning a loud failure into a silent one. This is the assertion
-   * that the failure stays loud.
+   * An environment-derived id has no row. Without the foreign key Postgres
+   * would store the dangling id happily, so the transitional failure must stay
+   * loud until PR B removes the environment-key path.
    */
   it('refuses a usage row for a key that does not exist', async () => {
     await expect(
       apiUsageRepo.recordUsage(db, {
-        keyId: 'missing-key-id',
+        keyId: 'env-google-0',
         provider: 'google',
         modelId: own('m'),
         tokens: 10,

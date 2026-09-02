@@ -130,7 +130,11 @@ Getting these words right in code and in copy is the difference between a cohere
 | [`ci.yml`](.github/workflows/ci.yml) | Lint, API tests and API build on every push and pull request |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Web build to Cloudflare Pages |
 
-Infrastructure is declared as code in [`sst.config.ts`](sst.config.ts) with [SST](https://sst.dev). PostgreSQL is supplied as a `DATABASE_URL` app secret; Valkey is shared and referenced rather than created, so a stage teardown never removes it.
+The API requires PostgreSQL through `DATABASE_URL`, but the checked-in
+DigitalOcean specifications still describe the retired Mongo binding and are
+not deployable. Do not apply them until the live PostgreSQL binding and the
+`master` release branch are wired together; see the
+[`deployment status`](docs/deployment.md). Valkey remains a shared service.
 
 </details>
 

@@ -32,10 +32,13 @@ apps/
              +-----------------+---------+-----------------+
              |                 |                           |
       +------v-------+  +------v-------+        +----------v----------+
-      | PostgreSQL   |  | Redis/Valkey |        | Alia agent runtime  |
-      | (Drizzle)    |  | cache/queues |        | -> Oxy -> Kaana     |
+      | PostgreSQL   |  | Redis/Valkey |        | Local AI provider   |
+      | (Drizzle)    |  | cache/queues |        | bridge (temporary)  |
       +--------------+  +--------------+        +---------------------+
 ```
+
+Hub AI's target route is Station -> Alia -> Oxy -> Kaana. The local provider
+bridge above remains live until that separate cutover replaces every caller.
 
 ## Key Directories and Files
 
@@ -105,20 +108,21 @@ bun run dev:app                   # Expo app only (web + tunnel)
 bun run --filter @oxystation/api test       # API tests (Vitest)
 bun run --filter @oxystation/api test:pgdb  # Real PostgreSQL tests
 bun run --filter @oxystation/api lint       # Lint API code
-bunx sst dev                      # Start SST dev multiplexer
-bunx sst deploy --stage dev       # Deploy to a stage
 ```
 
+Do not run an SST or DigitalOcean deploy from this checkout. The checked-in
+specifications still point at the wrong branch and retired database binding;
+the [deployment status](deployment.md) lists the live discovery required first.
+
 Environment: copy `apps/api/.env.example` to `apps/api/.env` and set
-`DATABASE_URL`. Redis is optional for local development. Provider credentials
-are not Station environment variables; Hub AI uses Alia, which reaches Kaana
-through Oxy.
+`DATABASE_URL`. Redis is optional for local development. Existing provider
+environment variables are a temporary availability fallback, not an extension
+point; do not add providers there.
 
 ## Links to Deep Docs
 
 | Topic | File |
 |-------|------|
 | API reference | [docs/api-reference.md](api-reference.md) |
-| OxyHQ authentication | [docs/oxyhq-auth.md](oxyhq-auth.md) |
-| Deployment (SST + DigitalOcean) | [docs/deployment.md](deployment.md) |
+| Deployment status and blockers | [docs/deployment.md](deployment.md) |
 | Project conventions | [CLAUDE.md](../CLAUDE.md) (also read by AI coding assistants) |

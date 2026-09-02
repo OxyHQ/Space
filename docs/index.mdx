@@ -66,15 +66,15 @@ bun run dev:app
 ```
 
 The API expects a `.env` in `apps/api/` with `DATABASE_URL`, Redis (optional),
-and Oxy auth configured. Start from `apps/api/.env.example`. AI provider
-credentials do not belong in this file; Kaana owns them.
+and Oxy auth configured. Start from `apps/api/.env.example`. The local AI
+runtime still has a frozen provider-key environment fallback; the target
+Alia -> Oxy -> Kaana route removes it in a separate cutover.
 
 ## Topics
 
 - **[API Reference](api-reference)** — endpoint catalogue
-- **[Deployment](deployment)** — SST + DigitalOcean + Cloudflare infra-as-code
+- **[Deployment status](deployment)** — blocked DigitalOcean spec audit and required live discovery
 - **[Onboarding](onboarding)** — developer onboarding walkthrough
-- **[OxyHQ Auth](oxyhq-auth)** — which OxyHQ package to use per surface
 
 ## Repository
 

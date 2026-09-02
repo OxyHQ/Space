@@ -1,8 +1,6 @@
-# Oxy Station API Reference
+# Oxy Station API reference
 
-Last updated: 2026-03-07
-
-> Note: The legacy chat / model / agent endpoints documented below were part of the previous Clarity AI chat product. They remain mounted internally during the Phase 0 strip but are not part of the Oxy Station user-facing surface.
+Last verified against the mounted Express routers: 2026-09-02.
 
 ## Base URL
 
@@ -10,259 +8,84 @@ Last updated: 2026-03-07
 
 ## Authentication
 
-Use `Authorization: Bearer <Oxy session token>`. Internal service calls may use
-the separately provisioned Station service credential. The legacy developer
-API-key route is not mounted.
+Protected routes accept an Oxy session JWT in
+`Authorization: Bearer <token>`. Server-to-server routes use a separately
+provisioned Oxy service credential. Station does not expose a developer API-key
+management route.
+
+`GET /health/live`, the billing catalogue, feedback submission and the public
+share-token route are examples of routes that do not require a user session.
+Individual route middleware remains the source of truth for authentication.
+
+## Mounted route groups
+
+The API currently mounts these public groups:
+
+- `/health`
+- `/auth`
+- `/conversations`
+- `/credits`
+- `/clarity/search`
+- `/v1`
+- `/billing`
+- `/feedback`
+- `/models`
+- `/analytics`
+- `/notifications`
+- `/workspaces`
+- `/pages`, `/blocks`, `/comments` and `/databases`
+- `/uploads` and `/embed`
+- `/share-links` and `/share/:token`
+
+`/internal` is service-authenticated and is not a public client API.
+
+There is no mounted `/triggers` group and no external `/webhooks/oxy` route.
+The old catch-all webhook router was removed because it returned `404` for
+every request.
 
 ## Models
 
 ### `GET /v1/models`
-List available Clarity models.
 
-Query params:
-- `category` (optional): `general | coding | vision | audio | multimodal | voice`
-- `chat` (optional): `true` to return chat-visible models only
-
-Response shape:
-
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "clarity-v1",
-      "object": "model",
-      "owned_by": "clarity",
-      "name": "Clarity V1",
-      "category": "general",
-      "is_default": true,
-      "is_available": true,
-      "capabilities": {
-        "tools": true,
-        "vision": true,
-        "max_tokens": 8192
-      },
-      "pricing": {
-        "credit_multiplier": 1
-      }
-    }
-  ]
-}
-```
+Lists the virtual models exposed by Station. This route is public. Optional
+query parameters are `category` and `chat=true`.
 
 ### `GET /v1/models/:modelId`
-Return one model descriptor.
 
-## Chat Completions
+Returns one virtual-model descriptor or `404`.
+
+The response deliberately omits the underlying provider mapping.
+
+## Chat completions
 
 ### `POST /v1/chat/completions`
-Unified runtime for app, Codea, and Cowork.
 
-Minimal request:
-
-```json
-{
-  "model": "clarity-v1",
-  "messages": [
-    { "role": "user", "content": "Prepare my meeting with Sarah" }
-  ],
-  "stream": true
-}
-```
-
-Supported extras (selected):
-- `conversationId`
-- `thinkingMode`
-- `agentMode`
-- `deepResearch`
-- `tools`
-- `stream_options.include_usage`
+Authenticated OpenAI-compatible chat completion. Standard JSON and streaming
+responses are supported. See [Chat API](./chat-api.mdx) for the verified
+request and event contract.
 
 ### `POST /clarity/search`
-Same runtime and behavior as `/v1/chat/completions`.
 
-## SSE Event Contract (streaming)
+Compatibility mount of the same handler with optional Oxy authentication.
 
-All named events include `eventVersion: 1`.
+## Removed model-routing endpoints
 
-### `clarity.plan_preview`
-
-```json
-{
-  "eventVersion": 1,
-  "planId": "plan-chatcmpl-...",
-  "intent": "meeting_prep",
-  "confidence": 0.8,
-  "steps": ["Check calendar", "Check email", "Check notes"]
-}
-```
-
-### `clarity.approval_request`
-
-```json
-{
-  "eventVersion": 1,
-  "requestId": "...",
-  "agentId": "...",
-  "toolName": "sendTelegram",
-  "args": {},
-  "description": "External impact action",
-  "severity": "high",
-  "timeout": 60000
-}
-```
-
-### `clarity.approval_result`
-
-```json
-{
-  "eventVersion": 1,
-  "requestId": "...",
-  "decision": "approved"
-}
-```
-
-`decision` is `approved | denied | timeout`.
-
-### `clarity.research_progress`
-Progress updates for deep research.
-
-### `clarity.agent_session`
-Announces autonomous agent session creation from chat.
-
-### `clarity.reasoning`
-Reasoning tokens/summary blocks.
-
-### `clarity.tool_result`
-Tool execution result payload.
-
-### `clarity.title`
-Conversation title updates.
-
-### `clarity.model_switch`
-Runtime model switch notification.
-
-## Triggers API
-
-### `GET /triggers`
-List current user triggers.
-
-### `POST /triggers`
-Create trigger.
-
-Required fields:
-- `name`
-- `type`: `schedule | webhook | integration_event`
-- `action.prompt`
-
-### `PATCH /triggers/:id`
-Update trigger.
-
-### `DELETE /triggers/:id`
-Delete trigger.
-
-### `POST /triggers/:id/run`
-Manual run.
-
-### `GET /triggers/:id/executions`
-Execution history.
-
-### `POST /triggers/webhook/:token`
-Run webhook trigger by token.
-
-## Oxy Service Events
-
-### `POST /webhooks/oxy/:serviceId`
-Accepts service events with optional signature verification.
-
-Runtime behavior:
-- Idempotent by `eventId`.
-- Creates persistent `AgentSession` before autonomous queueing.
-- Falls back to notification if autonomous execution fails.
-
-## Notifications API
-
-### `GET /notifications`
-List user notifications (paginated).
-
-Query params:
-- `status` (optional): `pending | sent | read | dismissed`
-- `type` (optional): notification type filter
-- `limit` (optional, default `30`, max `100`)
-- `offset` (optional, default `0`)
-
-### `GET /notifications/unread-count`
-Returns `{ count: number }`.
-
-### `PATCH /notifications/:id/read`
-Mark single notification as read.
-
-### `POST /notifications/read-all`
-Mark all notifications as read.
-
-### `PATCH /notifications/:id/dismiss`
-Dismiss a notification.
-
-### Push Token Management
-
-#### `POST /notifications/push-token`
-Register an Expo push token (mobile).
-
-Body: `{ token, platform?, deviceId? }`
-
-#### `DELETE /notifications/push-token`
-Deactivate an Expo push token.
-
-Body: `{ token }`
-
-### Web Push (Browser)
-
-#### `GET /notifications/vapid-public-key`
-Returns VAPID public key for browser push subscription. **No auth required.**
-
-Response: `{ publicKey: string }`
-
-#### `POST /notifications/web-push-subscription`
-Register a browser push subscription.
-
-Body: `{ endpoint, keys: { p256dh, auth } }`
-
-#### `DELETE /notifications/web-push-subscription`
-Deactivate a browser push subscription.
-
-Body: `{ endpoint }`
-
-### Real-time (Socket.IO)
-
-Connect to `config.apiUrl` via Socket.IO websocket. On connect, emit `subscribe-notifications` with userId. Listen for `notification` events to invalidate caches.
-
-## Codea Endpoints
-
-### `GET /codea/user`
-Entitlement payload.
-
-### `GET /codea/token`
-Token/quota metadata.
-
-### `GET /codea/mcp_registry`
-MCP policy metadata.
-
-### `GET /codea/me`
-Current user summary.
-
-## Removed Endpoints (no compatibility layer)
-
-These now return `410 Gone`:
+The following compatibility endpoints are still mounted only to return
+`410 Gone`:
 
 - `POST /v1/resolve-model`
 - `POST /v1/report-usage`
-- `POST /codea/resolve-model`
-- `POST /codea/report-usage`
 
-Also removed:
-- All `/automations*` endpoints.
+Provider resolution and usage accounting are internal runtime concerns.
 
-## Error Contract
+## Notifications
 
-- User-facing errors are sanitized.
-- Public responses include only Clarity model identifiers.
+The `/notifications` router exposes list, unread count, read/dismiss actions,
+Expo push-token registration and browser push-subscription registration. Except
+for `GET /notifications/vapid-public-key`, these routes require an Oxy session.
+
+## Errors
+
+User-facing AI errors are sanitized before they leave the API. Once an SSE
+response has started, failures are sent as an OpenAI-shaped error frame followed
+by `data: [DONE]`.

@@ -42,9 +42,12 @@ Key groups:
 - Queue/async execution (`REDIS_URL`)
 - Integrations and channels (`INTEGRATIONS_SERVICE_URL`, channel secrets)
 - Optional sandbox runtime (`DOCKER_HOST_URL`, `DOCKER_HOST_SECRET`)
+- Transitional provider-key fallback (documented in `.env.example`; do not expand)
 
 ## Notes
 
 - All user-facing errors must be sanitized via `apps/api/src/lib/errors/sanitize.ts`.
 - Internal model-routing details (provider names, provider model IDs) must never leak in public responses or logs.
 - The legacy `/clarity/search` and `/v1/chat/completions` chat endpoints remain mounted while Phase 5 (Hub AI) is internal-only; they are not surfaced in the Oxy Station UI.
+- Hub AI's target route is Alia -> Oxy -> Kaana. The local provider-key table
+  and environment fallback remain live until that route replaces every caller.

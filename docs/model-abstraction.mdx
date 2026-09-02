@@ -12,7 +12,7 @@ The routing layer is multi-provider on the backend (OpenAI, Anthropic, Google, G
 
 ## Internal catalogue
 
-Clarity ships a small, named tier set. The complete list (with token limits, credit multipliers, and category flags) lives in [`apps/api/src/internal/providers/lib/clarity-models.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/internal/providers/lib/clarity-models.ts).
+Clarity ships a small, named tier set. The complete list (with token limits, credit multipliers, and category flags) lives in [`apps/api/src/internal/providers/lib/clarity-models.ts`](https://github.com/OxyHQ/Station/blob/master/apps/api/src/internal/providers/lib/clarity-models.ts).
 
 | Model id | Tier | Use case |
 |----------|------|----------|
@@ -45,7 +45,7 @@ Resolution order at chat time:
    - Health (`provider-health.ts` — circuit breaker per provider)
    - Cost budget (`pricingTier`: `free` → `freemium` → `paid`)
    - Required capabilities (the request's `tools`, `vision`, etc.)
-3. **Failover** — the runtime tries candidates in order. Transient errors (5xx, network, rate limit) advance to the next candidate and emit a `clarity.model_switch` event.
+3. **Failover** — the runtime tries candidates in order. Transient errors (5xx, network, rate limit) advance to the next candidate. The current chat handler logs the retry internally; it does not emit a model-switch event.
 4. **Non-retryable errors** (`format`, `content_filter`) abort immediately — they're tier-level issues, not provider-level, so retrying is pointless.
 
 The user always sees the original `clarity-*` model id in the response — even if four providers were tried.
@@ -56,7 +56,7 @@ Three layers ensure provider names never leak:
 
 ### 1. Error messages
 
-Every user-facing error path calls `sanitizeMessage()` from [`apps/api/src/lib/errors/sanitize.ts`](https://github.com/OxyHQ/Station/blob/main/apps/api/src/lib/errors/sanitize.ts). It strips known provider names, provider model IDs, and provider-specific error codes, replacing them with neutral language.
+Every user-facing error path calls `sanitizeMessage()` from [`apps/api/src/lib/errors/sanitize.ts`](https://github.com/OxyHQ/Station/blob/master/apps/api/src/lib/errors/sanitize.ts). It strips known provider names, provider model IDs, and provider-specific error codes, replacing them with neutral language.
 
 ```ts
 import { sanitizeMessage } from '@/lib/errors/sanitize';
@@ -101,7 +101,7 @@ These rules apply to **all** contributors:
 | `apps/api/src/internal/providers/lib/clarity-models.ts` | Clarity model catalogue (tiers, capabilities, credit multipliers) |
 | `apps/api/src/internal/providers/lib/generate-model-mappings.ts` | Tier → provider routing table |
 | `apps/api/src/internal/providers/lib/model-resolver.ts` | `resolveModel()` + `getAIModel()` |
-| `apps/api/src/internal/providers/lib/fallback-engine.ts` | Failover orchestration with `clarity.model_switch` emission |
+| `apps/api/src/internal/providers/lib/fallback-engine.ts` | Failover orchestration and internal fallback-event recording |
 | `apps/api/src/internal/providers/lib/provider-health.ts` | Per-provider circuit breaker |
 | `apps/api/src/internal/providers/lib/provider-names.ts` | Internal-only provider identifiers |
 | `apps/api/src/lib/errors/sanitize.ts` | `sanitizeMessage()` provider-name stripping |
