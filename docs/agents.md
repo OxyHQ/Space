@@ -32,7 +32,8 @@ Current first-wave intents:
 
 ## Context Graph
 
-Persistent entities in MongoDB:
+The legacy design proposed these persistent entities; Station does not
+currently implement or persist them:
 
 - `ContextSource` - where data lives and how reliable it is.
 - `ContextNode` - discovered entities (people, projects, docs, threads, etc.).

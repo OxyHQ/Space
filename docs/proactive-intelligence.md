@@ -31,7 +31,7 @@ Supported trigger types:
 ```ts
 {
   prompt: string;
-  agentId?: ObjectId;
+  agentId?: string;
   roleId?: string;
   useTools: boolean;
   notify?: boolean;

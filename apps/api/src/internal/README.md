@@ -32,10 +32,12 @@ Main API (Port 4001)
 
 The module provides a multi-layer failover system for AI provider requests:
 
-**Key Manager** (`lib/key-manager.ts`):
-- Loads provider keys from MongoDB, sorted by priority (free first, then paid)
+**Key Manager** (`lib/key-manager.ts`, transitional):
+- Reads the local `provider_keys` table with no environment fallback. Do not
+  provision it: provider credentials belong to Kaana, and Hub AI must move to
+  Alia -> Oxy -> Kaana.
 - 10-second cache TTL to minimize stale-key window
-- Rate limit checking via single `$facet` aggregation (rps/rpm/rph/rpd and tps/tpm/tph/tpd)
+- Rate-limit checks for rps/rpm/rph/rpd and tps/tpm/tph/tpd
 - Credit limit enforcement (`spentUSD >= creditLimitUSD` → skip)
 - Cooldown management: exponential backoff for errors, flat 60s for rate limits, provider Retry-After header priority
 - `skipKeyIds` parameter for caller-driven key exclusion (failed keys from previous attempts)
@@ -62,7 +64,7 @@ The module provides a multi-layer failover system for AI provider requests:
 
 **Provider Health** (`lib/provider-health.ts`):
 - Circuit breaker pattern: 5 consecutive failures → open for 60s → half-open (3 attempts, 2 successes to close)
-- Per-provider/model health tracking in MongoDB
+- Transitional per-provider/model health tracking in the local database
 
 ### Authentication:
 

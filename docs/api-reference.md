@@ -10,10 +10,9 @@ Last updated: 2026-03-07
 
 ## Authentication
 
-Use one of:
-
-- `Authorization: Bearer <session-token>`
-- `Authorization: Bearer clarity_sk_<api-key>`
+Use `Authorization: Bearer <Oxy session token>`. Internal service calls may use
+the separately provisioned Station service credential. The legacy developer
+API-key route is not mounted.
 
 ## Models
 

@@ -444,39 +444,30 @@ router.post(
         return;
       }
 
-      try {
-        // The LOUD counterpart to the idempotent provisioning path: "already a
-        // member" is an answer this caller must show the user as a 409, not
-        // swallow. `addMember` reads the SQLSTATE off `cause` — a ported
-        // `err.code === '23505'` matches nothing and the branch collapses.
-        const result = await addMember(getDb(), {
-          workspaceId: ws.id,
-          userId: invitee.id,
-          role,
-          invitedBy: req.user.id,
-        });
+      // The LOUD counterpart to the idempotent provisioning path: "already a
+      // member" is an answer this caller must show the user as a 409, not
+      // swallow. `addMember` uses ON CONFLICT DO NOTHING RETURNING so a real
+      // infrastructure failure still propagates to the outer error handler.
+      const result = await addMember(getDb(), {
+        workspaceId: ws.id,
+        userId: invitee.id,
+        role,
+        invitedBy: req.user.id,
+      });
 
-        if ('duplicate' in result) {
-          res.status(409).json({ error: 'That user is already a member' });
-          return;
-        }
-
-        res.status(201).json({
-          member: {
-            userId: result.member.userId,
-            role: result.member.role,
-            invitedBy: result.member.invitedBy,
-            joinedAt: result.member.joinedAt,
-          },
-        });
-      } catch (createErr: unknown) {
-        const code = (createErr as { code?: number } | null)?.code;
-        if (code === 11000) {
-          res.status(409).json({ error: 'User is already a member of this workspace' });
-          return;
-        }
-        throw createErr;
+      if ('duplicate' in result) {
+        res.status(409).json({ error: 'That user is already a member' });
+        return;
       }
+
+      res.status(201).json({
+        member: {
+          userId: result.member.userId,
+          role: result.member.role,
+          invitedBy: result.member.invitedBy,
+          joinedAt: result.member.joinedAt,
+        },
+      });
     } catch (error: unknown) {
       log.general.error({ err: error }, 'Failed to invite member');
       res.status(500).json({ error: 'Failed to invite member' });

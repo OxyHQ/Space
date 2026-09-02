@@ -13,7 +13,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-440151?style=flat-square&logo=typescript&logoColor=white">
   <img alt="Bun" src="https://img.shields.io/badge/bun-1.3-440151?style=flat-square&logo=bun&logoColor=white">
   <img alt="Express" src="https://img.shields.io/badge/Express-4-440151?style=flat-square&logo=express&logoColor=white">
-  <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-Mongoose-440151?style=flat-square&logo=mongodb&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Drizzle-440151?style=flat-square&logo=postgresql&logoColor=white">
 </p>
 
 ---
@@ -46,7 +46,7 @@ On top of that, Station carries its own authorize screen: a registered developer
 | Workspace | Path | What it is |
 |---|---|---|
 | `@oxystation/app` | [`apps/app/`](apps/app/) | Expo client for web, iOS and Android: editor, database views, command palette, sharing |
-| `@oxystation/api` | [`apps/api/`](apps/api/) | Express API: TypeScript, MongoDB via Mongoose, Socket.IO |
+| `@oxystation/api` | [`apps/api/`](apps/api/) | Express API: TypeScript, PostgreSQL via Drizzle, Socket.IO |
 
 The client is expo-router with NativeWind and Reanimated, rendering [`@oxyhq/bloom`](https://www.npmjs.com/package/@oxyhq/bloom) primitives, with Zustand for state, TanStack Query for data, and shared API schemas from [`@oxyhq/contracts`](https://www.npmjs.com/package/@oxyhq/contracts).
 
@@ -95,7 +95,6 @@ bun run --filter @oxystation/api test   # Vitest
 | `Database` and `DatabaseView` | A typed collection of pages, and how it is rendered |
 | `Comment` | Discussion anchored in a document |
 | `ShareLink` | Public or scoped access to a page |
-| `DeveloperApp` and `DeveloperApiKey` | Third party integrations and their credentials |
 | `Subscription`, `Transaction`, `UserCredits` | Billing |
 
 Routes live under [`apps/api/src/routes/`](apps/api/src/routes/).
@@ -131,7 +130,7 @@ Getting these words right in code and in copy is the difference between a cohere
 | [`ci.yml`](.github/workflows/ci.yml) | Lint, API tests and API build on every push and pull request |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Web build to Cloudflare Pages |
 
-Infrastructure is declared as code in [`sst.config.ts`](sst.config.ts) with [SST](https://sst.dev). MongoDB and Valkey are shared across Oxy apps and referenced rather than created, so a stage teardown never removes them.
+Infrastructure is declared as code in [`sst.config.ts`](sst.config.ts) with [SST](https://sst.dev). PostgreSQL is supplied as a `DATABASE_URL` app secret; Valkey is shared and referenced rather than created, so a stage teardown never removes it.
 
 </details>
 

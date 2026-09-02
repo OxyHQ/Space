@@ -31,7 +31,8 @@ export interface ResolvedModel {
 /**
  * Resolve an Clarity model ID to a concrete provider and model.
  *
- * Keys are loaded internally from MongoDB via key-manager.
+ * The transitional local key-manager resolves a stored key. Hub AI's target
+ * path is Alia -> Oxy -> Kaana, where Kaana owns provider credentials.
  * Uses the fallback engine for smart retry logic based on error classification.
  *
  * @param requestedModel - The model ID requested (can be Clarity model or legacy model name)

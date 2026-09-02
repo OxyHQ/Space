@@ -326,13 +326,10 @@ export const apiUsages = pgTable(
     /**
      * A real foreign key, and deliberately so.
      *
-     * `recordKeyUsage` is called with env-derived ids like `env-google-0`
-     * (`key-manager.ts:105` mints them, `provider-api.ts:135` and `:201` pass
-     * them straight through). In Mongo that is a `ref`-ed ObjectId path, so the
-     * insert throws a CastError and the caller sees it. Without a foreign key
-     * Postgres would happily store the dangling id — turning a loud failure
-     * into a silent one, which is the direction that must never be taken by
-     * accident. The FK keeps the failure loud.
+     * A request can race a key deletion and present an id that no longer
+     * exists. Without a foreign key Postgres would happily store that dangling
+     * id — turning a loud failure into a silent one, which is the direction
+     * that must never be taken by accident. The FK keeps the failure loud.
      */
     keyId: text()
       .notNull()

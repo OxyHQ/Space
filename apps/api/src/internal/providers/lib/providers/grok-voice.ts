@@ -18,9 +18,7 @@ import { log } from '../../../../lib/logger.js';
 export const grokVoiceProvider: VoiceProvider = {
   name: 'Grok Voice',
 
-  isEnabled: () => {
-    return !!process.env.GROK_API_KEY || true; // Enabled if key pool has grok keys
-  },
+  isEnabled: () => true,
 
   voice: {
     capabilities: {

@@ -33,10 +33,8 @@ services:
     http_port: 8080
 
     envs:
-      - key: MONGODB_URI
-        value: "${db-oxy.DATABASE_URL}"
-      - key: CA_CERT
-        value: "${db-oxy.CA_CERT}"
+      - key: DATABASE_URL
+        type: SECRET
       - key: REDIS_URL
         value: "${db-valkey.DATABASE_URL}"
       - key: REDIS_CA_CERT
@@ -86,11 +84,6 @@ static_sites:
     catchall_document: index.html
 
 databases:
-  - name: db-oxy
-    engine: MONGODB
-    version: "8"
-    production: true
-    cluster_name: db-oxy
   - name: db-valkey
     engine: REDIS
     version: "7"

@@ -12,7 +12,8 @@ All infrastructure is defined in `sst.config.ts` at the repo root. SST manages:
 - **DO Spaces**: File storage bucket (`bucket-oxystation`)
 - **Domains**: station.oxy.so, api.station.oxy.so
 
-Shared resources (MongoDB, Valkey) are referenced by cluster name but managed externally across all Oxy apps.
+PostgreSQL is supplied as the `DATABASE_URL` App Platform secret. Valkey is
+referenced by cluster name and managed externally.
 
 ### Prerequisites
 
@@ -57,19 +58,15 @@ bunx sst dev    # Starts multiplexer with linked resources
 
 ## Preconditions
 
-- MongoDB cluster reachable from API (shared `db-oxy` cluster).
+- PostgreSQL reachable through `DATABASE_URL`.
 - Oxy auth service reachable.
 - Valkey (Redis) available for caching and rate limiting.
 
-## Database Naming
+## Database
 
-Use per-app, per-env database naming:
-
-- `oxystation-development`
-- `oxystation-staging`
-- `oxystation-production`
-
-Set database name via `mongoose.connect(..., { dbName })`.
+The database name is part of `DATABASE_URL`. The API performs `select 1` before
+opening the listener, so a missing or unreachable PostgreSQL database fails the
+deployment loudly.
 
 ## Minimum Environment (API)
 
@@ -79,7 +76,7 @@ These are configured in `sst.config.ts` and injected via DO App Platform:
 PORT=8080
 NODE_ENV=production
 WEB_URL=https://station.oxy.so
-MONGODB_URI=<from db-oxy cluster>
+DATABASE_URL=<PostgreSQL connection string>
 REDIS_URL=<from db-valkey cluster>
 SERVICE_SECRET=<strong-secret>       # Set as SECRET in DO dashboard
 ```
@@ -108,11 +105,11 @@ LIVEKIT_API_SECRET=<secret>
 
 On API boot, the server automatically:
 
-- Connects MongoDB.
+- Verifies PostgreSQL with a real query before listening.
 - Initializes Socket.IO.
-- Starts trigger scheduler (`/triggers` runtime).
-- Starts async worker if queue is configured.
-- Warms internal AI provider caches (Phase 5, internal only).
+- Warms the transitional local AI provider caches. This is live migration debt,
+  not the target Hub AI architecture; Station must move that path to
+  Alia -> Oxy -> Kaana before the local provider runtime is removed.
 
 ## Health Checks
 

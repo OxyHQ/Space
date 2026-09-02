@@ -328,6 +328,6 @@ getDb()
     process.on('SIGINT', () => shutdown('SIGINT'));
   })
   .catch((error) => {
-    console.error('Failed to connect to MongoDB:', error);
+    console.error('Failed to connect to PostgreSQL:', error);
     process.exit(1);
   });

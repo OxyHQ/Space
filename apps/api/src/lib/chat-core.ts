@@ -212,7 +212,7 @@ export function getAIModel(keyConfig: KeyConfig) {
  * Report the result of a provider call for health tracking and key rotation.
  * Delegates to the gateway API via gateway-client (fire-and-forget).
  *
- * @param keyId - The key ID from the resolved model (may not exist for env-based keys)
+ * @param keyId - The stored key ID from the resolved model
  * @param provider - Provider name
  * @param modelId - Model ID used
  * @param success - Whether the request succeeded

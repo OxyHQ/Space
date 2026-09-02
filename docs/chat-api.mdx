@@ -25,10 +25,11 @@ Send one of the following in `Authorization`:
 
 | Token type | Header | Source |
 |------------|--------|--------|
-| Session token | `Bearer <oxy_jwt>` | OxyHQ session, used by the Clarity app |
-| Developer API key | `Bearer clarity_sk_<key>` | Created in the [developer portal](developers-portal) |
+| Session token | `Bearer <oxy_jwt>` | OxyHQ session |
+| Internal service credential | `Bearer <service credential>` | Provisioned outside the client |
 
-Developer keys carry scopes (`chat:read`, `chat:write`, `models:read`, …). Calls missing a required scope return `403 Forbidden` with a sanitised error body — provider names are never leaked.
+The legacy developer API-key route is not mounted. Provider names are never
+included in an error response.
 
 ## Request body
 

@@ -7,8 +7,8 @@
  * - DigitalOcean App Platform (API service + static frontend)
  * - DigitalOcean Spaces bucket (file storage)
  *
- * Shared resources (MongoDB, Valkey) are managed externally
- * and referenced via environment variables.
+ * PostgreSQL is supplied as the DATABASE_URL app secret. Valkey is managed
+ * externally and referenced by the App Platform database binding.
  *
  * Auth:
  *   export DIGITALOCEAN_TOKEN=dop_v1_...
@@ -99,9 +99,9 @@ export default $config({
               failureThreshold: 3,
             },
             envs: [
-              // Shared DB references (external, not managed by SST)
-              { key: "MONGODB_URI", value: "${db-oxy.DATABASE_URL}" },
-              { key: "CA_CERT", value: "${db-oxy.CA_CERT}" },
+              // PostgreSQL is external to this SST stack. Keep its credential
+              // in the App Platform secret store rather than source control.
+              { key: "DATABASE_URL", type: "SECRET" },
               { key: "REDIS_URL", value: "${db-valkey.DATABASE_URL}" },
               { key: "REDIS_CA_CERT", value: "${db-valkey.CA_CERT}" },
               // Service config
@@ -156,13 +156,6 @@ export default $config({
 
         // --- Managed databases (shared, referenced by name) ---
         databases: [
-          {
-            name: "db-oxy",
-            engine: "MONGODB",
-            version: "8",
-            production: isProd,
-            clusterName: "db-oxy",
-          },
           {
             name: "db-valkey",
             engine: "REDIS",

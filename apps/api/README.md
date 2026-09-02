@@ -5,7 +5,7 @@ Express + TypeScript backend for Oxy Station.
 ## Tech
 
 - Express + TypeScript
-- MongoDB + Mongoose (shared `db-oxy` cluster, app database `oxystation-{NODE_ENV}`)
+- PostgreSQL + Drizzle
 - Redis (Valkey) for rate limits, caching, Socket.IO scale-out
 - Socket.IO for real-time events
 - BullMQ for async jobs
@@ -32,12 +32,12 @@ bun run start
 
 ## Environment
 
-Use `apps/api/example.env` as the baseline.
+Use `apps/api/.env.example` as the baseline.
 
 Key groups:
 
 - Server and CORS (`PORT`, `WEB_URL`, `API_BASE_URL`)
-- MongoDB (`MONGODB_URI`)
+- PostgreSQL (`DATABASE_URL`, required)
 - Auth secrets (`JWT_SECRET`, `SERVICE_SECRET`)
 - Queue/async execution (`REDIS_URL`)
 - Integrations and channels (`INTEGRATIONS_SERVICE_URL`, channel secrets)

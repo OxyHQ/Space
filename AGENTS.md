@@ -12,12 +12,15 @@ Roadmap reference: `~/.claude/plans/this-was-other-app-fancy-meteor.md`.
 ## Tech Stack
 
 - **Frontend**: Expo SDK 56, NativeWind 5, Reanimated v4, Zustand, TanStack Query, expo-router
-- **Backend**: Express, TypeScript, MongoDB/Mongoose, Socket.IO, Redis (Valkey)
+- **Backend**: Express, TypeScript, PostgreSQL/Drizzle, Socket.IO, Redis (Valkey)
 - **Auth**: `@oxyhq/core` (incl. `@oxyhq/core/server`), `@oxyhq/services`
 
-## MongoDB
+## PostgreSQL
 
-Database: `oxystation-production` (passed to `mongoose.connect()` via `dbName`, NOT embedded in `MONGODB_URI`).
+`DATABASE_URL` is required, and `apps/api/src/index.ts` issues a real query
+before listening. Schema and migrations live under `apps/api/src/db/` and
+`apps/api/src/drizzle/`. Do not introduce MongoDB, Mongoose, or a local database
+fallback.
 
 ## Vocabulary
 
@@ -31,19 +34,10 @@ Database: `oxystation-production` (passed to `mongoose.connect()` via `dbName`, 
 
 Do NOT use legacy chat vocabulary (conversation, message, thread, role/persona, agent, skill, deep research, follow-up) in user-facing copy.
 
-## Internal AI Provider Routing (internal only, Phase 5)
+## AI boundary
 
-No end-user model picker in Oxy Station. The provider-routing layer (`apps/api/src/internal/providers/*`) is preserved for Hub AI (Phase 5):
-- Internal calls map an abstract model identifier to concrete provider models with automatic fallback.
-- Internal providers (OpenAI, Anthropic, Google, Groq, DeepSeek, xAI, Mistral, etc.) must NEVER be exposed in UI, API responses, errors, SEO metadata, or docs.
-- Use `sanitizeMessage()` from `apps/api/src/lib/errors/sanitize.ts` for any user-facing error path touching provider code.
-- The internal-only API is CORS-restricted to known Oxy origins.
-
-## Oxy Service Connector (internal, Phase 5)
-
-A manifest-driven protocol where apps register tool definitions that the internal AI runtime auto-discovers. Not part of the Oxy Station user surface.
-
-Key files:
-- `apps/api/src/models/oxy-service.ts` — OxyService Mongoose model (manifest schema)
-- `apps/api/src/lib/tools/oxy-services.ts` — Tool builder
-- `apps/api/src/routes/oxy-service-events.ts` — Event webhook endpoint
+Hub AI is an Alia agent flow; Alia reaches inference through Oxy and Kaana.
+Station does not own provider routing or provider credentials. The existing
+`apps/api/src/internal/providers/` tree is transition debt and must not be
+expanded. Provider names must never reach UI, public API responses, errors,
+SEO metadata, or docs.
