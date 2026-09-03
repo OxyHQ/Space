@@ -43,9 +43,9 @@ router.use(authenticateToken);
  * It is a 400 guard and nothing more: it never gates a lookup, because the
  * query already answers "no such row" for free, and a shape predicate used as a
  * precondition fails closed on a valid id it has not been taught about.
- * `workspaceId` goes through it too — workspaces are still Mongoose, so those
- * ids are ObjectIds today and uuid v7 once that domain ports; the predicate
- * spans both without needing to know which.
+ * `workspaceId` goes through it too. Backfilled workspace ids retain their
+ * ObjectId shape while rows created in PostgreSQL use uuid v7, so the predicate
+ * spans both without guessing which storage generation produced the row.
  */
 const entityIdSchema = z.string().refine(isLiveEntityId, 'Invalid id');
 

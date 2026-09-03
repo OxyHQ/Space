@@ -28,7 +28,7 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/__tests__/**', 'src/**/*.test.ts', 'src/index.ts'],
     },
-    // Increase timeout for tests that mock MongoDB
+    // Leave enough time for subprocess-backed boundary checks on slower CI runners.
     testTimeout: 10000,
   },
 });

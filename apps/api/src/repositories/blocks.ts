@@ -1,9 +1,8 @@
 /**
  * Every query the routes run against `blocks`.
  *
- * Not yet called: `routes/blocks.ts`, `routes/pages.ts` and
- * `routes/share-links.ts` still go through Mongoose. Each function names the
- * call site it replaces.
+ * Called by `routes/blocks.ts`, `routes/pages.ts` and `routes/share-links.ts`.
+ * Each function names its route-level use.
  */
 
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';

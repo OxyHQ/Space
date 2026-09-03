@@ -309,10 +309,9 @@ export async function dismissNotification(
  *
  * This is a registry entry and nothing more. A sweeper with no caller is green
  * and inert: the mechanism can work and nothing establishes that it does.
- * Wiring `sweepAllExpiredRows` into the service entrypoint is a cutover-time
- * step that must land with an assertion that the entrypoint really calls it —
- * it is deliberately absent here, because starting a Postgres sweep while the
- * service still reads Mongo would sweep a database that does not exist.
+ * Wiring `sweepAllExpiredRows` into the service entrypoint is still a release
+ * lifecycle step. It must land with an assertion that the entrypoint really
+ * calls it and that each API deployment starts exactly one scheduler.
  */
 export const NOTIFICATION_EXPIRY_TARGET: ExpirySweepTarget = {
   table: notifications,

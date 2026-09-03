@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -18,6 +18,18 @@ function runOriginPreflight(origin: string | undefined) {
   return spawnSync('bun', ['run', 'validate:api-origin'], {
     cwd: APP_ROOT,
     env,
+    encoding: 'utf8',
+  });
+}
+
+function loadRuntimeConfig(origin: string, nodeEnvironment: 'development' | 'production') {
+  return spawnSync('bun', ['-e', "await import('./lib/config.ts')"], {
+    cwd: APP_ROOT,
+    env: {
+      ...process.env,
+      EXPO_PUBLIC_API_URL: origin,
+      NODE_ENV: nodeEnvironment,
+    },
     encoding: 'utf8',
   });
 }
@@ -57,6 +69,20 @@ describe('the web export fails closed before bundling', () => {
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toContain(marker);
+  });
+
+  it('also refuses HTTP when production loads the checked runtime config', () => {
+    expect(loadRuntimeConfig('http://127.0.0.1:4001', 'development').status).toBe(0);
+    expect(loadRuntimeConfig('https://api.example.test', 'production').status).toBe(0);
+    expect(loadRuntimeConfig('http://api.example.test', 'production').status).not.toBe(0);
+  });
+
+  it('keeps the retired chat avatar and realtime voice processor out of the web export', () => {
+    const publicRoot = resolve(APP_ROOT, 'public');
+
+    expect(existsSync(resolve(publicRoot, '_worker.js'))).toBe(true);
+    expect(existsSync(resolve(publicRoot, 'agent-avatar-reference.png'))).toBe(false);
+    expect(existsSync(resolve(publicRoot, 'audio-processor.js'))).toBe(false);
   });
 
   it('wires the checked preflight into both export commands and the deploy workflow', () => {

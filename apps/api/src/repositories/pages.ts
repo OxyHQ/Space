@@ -1,10 +1,9 @@
 /**
  * Every query the routes run against `pages`.
  *
- * Not yet called: `routes/pages.ts`, `routes/databases.ts` and
- * `routes/workspaces.ts` still go through Mongoose. Each function below names
- * the call site it replaces, so the rewiring commit is a lookup rather than a
- * rediscovery, and so a function nobody calls is visible as one.
+ * `routes/pages.ts`, `routes/databases.ts` and `routes/workspaces.ts` call this
+ * repository. Each function below names its route-level use so a function
+ * nobody calls remains visible as one.
  *
  * Where Mongo and Postgres disagree, the divergence is stated at the function
  * that carries it. The schema-level decisions (the `parentId` referential

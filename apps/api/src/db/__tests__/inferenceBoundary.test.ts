@@ -52,6 +52,33 @@ const PROVIDER_ENV_NAMES = [
   'HYPERBOLIC_API_KEY',
   'NOVITA_API_KEY',
   'DIGITALOCEAN_KEYS',
+  'GEMINI_API_KEY',
+  'NVIDIA_API_KEY',
+  'AMD_API_KEY',
+  'REQUESTY_API_KEY',
+  'AI_GATEWAY_API_KEY',
+  'HF_TOKEN',
+  'HUGGINGFACE_API_KEY',
+  'MODELSCOPE_API_KEY',
+  'ZHIPU_API_KEY',
+  'OLLAMA_API_KEY',
+  'OVH_AI_ENDPOINTS_ACCESS_TOKEN',
+  'KILO_API_KEY',
+  'OPENCODE_API_KEY',
+  'AION_API_KEY',
+  'AGNES_API_KEY',
+  'DASHSCOPE_API_KEY',
+  'SILICONFLOW_API_KEY',
+  'GLHF_API_KEY',
+  'AI21_API_KEY',
+  'NSCALE_API_KEY',
+  'NEBIUS_API_KEY',
+  'VLLM_API_KEY',
+  'MLX_API_KEY',
+  'LLAMAFILE_API_KEY',
+  'LM_STUDIO_API_KEY',
+  'LLAMA_CPP_API_KEY',
+  'JAN_API_KEY',
 ] as const;
 
 const PROVIDER_SDKS = new Set([
@@ -65,7 +92,12 @@ const PROVIDER_SDKS = new Set([
   '@fal-ai/client',
   '@google/generative-ai',
   '@google/genai',
+  '@google-cloud/vertexai',
   '@huggingface/inference',
+  '@huggingface/transformers',
+  '@langchain/anthropic',
+  '@langchain/google-genai',
+  '@langchain/openai',
   '@mistralai/mistralai',
   '@xai/sdk',
   'ai',
@@ -73,6 +105,8 @@ const PROVIDER_SDKS = new Set([
   'cohere-ai',
   'fireworks-ai',
   'groq-sdk',
+  'langchain',
+  'llamaindex',
   'mistralai',
   'ollama',
   'openai',
@@ -106,13 +140,52 @@ const DIRECT_INFERENCE_ENDPOINT = new RegExp(
     'api\\.sambanova\\.ai',
     'api\\.hyperbolic\\.xyz',
     'api\\.novita\\.ai',
+    'integrate\\.api\\.nvidia\\.com',
+    'developer\\.amd\\.com\\.cn/radeon/api',
+    'router\\.requesty\\.ai',
+    'ai-gateway\\.vercel\\.sh',
+    'api\\.llm7\\.io',
+    'router\\.huggingface\\.co',
+    'api-inference\\.modelscope\\.cn',
+    'open\\.bigmodel\\.cn',
+    'api\\.ollama\\.com',
+    '[a-z0-9.-]*endpoints\\.kepler\\.ai\\.cloud\\.ovh\\.net',
+    'api\\.kilo\\.ai',
+    'opencode\\.ai/zen',
+    'api\\.aionlabs\\.ai',
+    'apihub\\.agnes-ai\\.com',
+    'dashscope-intl\\.aliyuncs\\.com',
+    'api\\.siliconflow\\.cn',
+    'glhf\\.chat/api/openai',
+    'api\\.ai21\\.com',
+    'inference\\.api\\.nscale\\.com',
+    'api\\.studio\\.nebius\\.com',
+    '[a-z0-9.-]*openai\\.azure\\.com',
   ].join('|')})`,
   'iu',
 );
+const CLOUDFLARE_INFERENCE_ENDPOINT =
+  /https?:\/\/api\.cloudflare\.com\/[^\s'"`]*\/ai(?:\/|\b)/iu;
 const INFERENCE_SURFACE = /inference|chat.?completions|kaana|relay|alia.?provider/iu;
-const NAME_ROUTING_FIELD = /\b(?:provider|providerId|providerName|model|modelId|modelName|deploymentName|routingProfileName|priority|order)\s*:/u;
+const FORBIDDEN_ROUTING_FIELDS = new Set([
+  'provider',
+  'providerid',
+  'providername',
+  'model',
+  'modelid',
+  'modelname',
+  'deploymentid',
+  'deploymentname',
+  'routeid',
+  'routename',
+  'routingprofilename',
+  'priority',
+  'order',
+]);
 const ORDER_ROUTING_FALLBACK = /\.(?:find|findIndex|filter|sort|orderBy)\s*\(.{0,500}\b(?:provider|model|name|priority|order)\b/isu;
+const COLLECTION_ROUTING_FALLBACK = /\b(?:deployments|routes|models|providers|candidates)\s*\.\s*(?:find|findIndex|filter|sort|orderBy)\s*\(/iu;
 const FIRST_ROW_ROUTING_FALLBACK = /\b(?:deployments|routes|models|providers|candidates|rows)\s*\[\s*0\s*\]|\.(?:at|limit)\s*\(\s*(?:0|1)\s*\)|\bfindFirst\s*\(/iu;
+const PROVIDER_STORAGE = /\b(?:provider|inference|model)[_-]?(?:keys?|credentials?|secrets?)\b|key-manager/iu;
 
 function trackedFiles(...paths: string[]): string[] {
   return execFileSync('git', ['ls-files', '--', ...paths], {
@@ -135,6 +208,60 @@ function importedPackages(source: string): string[] {
   return ts.preProcessFile(source, true, true).importedFiles.map(({ fileName }) => fileName);
 }
 
+function executableSource(artifact: Artifact): string {
+  if (artifact.path.endsWith('.d.ts')) return '';
+  return ts.transpileModule(artifact.source, {
+    fileName: artifact.path,
+    compilerOptions: {
+      jsx: ts.JsxEmit.Preserve,
+      module: ts.ModuleKind.ESNext,
+      removeComments: true,
+      target: ts.ScriptTarget.ESNext,
+    },
+  }).outputText;
+}
+
+function hasForbiddenRoutingReference(artifact: Artifact): boolean {
+  const sourceFile = ts.createSourceFile(
+    artifact.path,
+    artifact.source,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  let violation = false;
+
+  function checkName(name: ts.Node): void {
+    if (
+      (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+      FORBIDDEN_ROUTING_FIELDS.has(name.text.replace(/[_-]/gu, '').toLowerCase())
+    ) {
+      violation = true;
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isBindingElement(node) ||
+      ts.isParameter(node) ||
+      ts.isPropertyAccessExpression(node) ||
+      ts.isPropertyAssignment(node) ||
+      ts.isPropertyDeclaration(node) ||
+      ts.isPropertySignature(node) ||
+      ts.isShorthandPropertyAssignment(node) ||
+      ts.isVariableDeclaration(node)
+    ) {
+      checkName(node.name);
+    } else if (ts.isElementAccessExpression(node) && node.argumentExpression) {
+      checkName(node.argumentExpression);
+    }
+
+    if (!violation) ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return violation;
+}
+
 function packageRoot(specifier: string): string {
   if (!specifier.startsWith('@')) return specifier.split('/')[0] ?? specifier;
   return specifier.split('/').slice(0, 2).join('/');
@@ -149,17 +276,39 @@ function boundaryViolations(
   const providerEnvPattern = new RegExp(`\\b(?:${PROVIDER_ENV_NAMES.join('|')})\\b`, 'u');
   const internalInferenceEnvPattern = /\b(?:KAANA|RELAY|ALIA_(?:PROVIDER|OPENAI|ANTHROPIC|GOOGLE|GROQ|MISTRAL|DEEPSEEK|TOGETHER|REPLICATE|CEREBRAS|OPENROUTER|COHERE|FIREWORKS|PERPLEXITY|XAI|SAMBANOVA|HYPERBOLIC|NOVITA|DIGITALOCEAN))_[A-Z0-9_]+\b/u;
 
-  for (const artifact of [...runtime, ...configuration]) {
+  for (const artifact of [...configuration, ...manifests]) {
     if (providerEnvPattern.test(artifact.source) || internalInferenceEnvPattern.test(artifact.source)) {
       violations.push({ kind: 'provider_env', path: artifact.path });
+    }
+    if (
+      DIRECT_INFERENCE_ENDPOINT.test(artifact.source) ||
+      CLOUDFLARE_INFERENCE_ENDPOINT.test(artifact.source)
+    ) {
+      violations.push({ kind: 'direct_inference_endpoint', path: artifact.path });
     }
   }
 
   for (const artifact of runtime) {
+    const source = executableSource(artifact);
     const imports = importedPackages(artifact.source).map(packageRoot);
     if (
+      providerEnvPattern.test(source) ||
+      internalInferenceEnvPattern.test(source) ||
+      (artifact.path.endsWith('.d.ts') &&
+        (providerEnvPattern.test(artifact.source) ||
+          internalInferenceEnvPattern.test(artifact.source)))
+    ) {
+      violations.push({ kind: 'provider_env', path: artifact.path });
+    }
+    if (
+      DIRECT_INFERENCE_ENDPOINT.test(source) ||
+      CLOUDFLARE_INFERENCE_ENDPOINT.test(source)
+    ) {
+      violations.push({ kind: 'direct_inference_endpoint', path: artifact.path });
+    }
+    if (
       artifact.path.includes('/internal/providers/') ||
-      /\bprovider_keys\b|\bproviderKeys\b|key-manager/iu.test(artifact.source)
+      PROVIDER_STORAGE.test(source)
     ) {
       violations.push({ kind: 'provider_storage', path: artifact.path });
     }
@@ -175,25 +324,23 @@ function boundaryViolations(
     }
     if (
       /\b(?:createOpenAI|createAnthropic|createGoogleGenerativeAI|generateText|streamText)\s*\(/u.test(
-        artifact.source,
+        source,
       )
     ) {
       violations.push({ kind: 'provider_execution', path: artifact.path });
     }
-    if (DIRECT_INFERENCE_ENDPOINT.test(artifact.source)) {
-      violations.push({ kind: 'direct_inference_endpoint', path: artifact.path });
-    }
     if (
-      INFERENCE_SURFACE.test(`${artifact.path}\n${artifact.source}`) &&
-      (NAME_ROUTING_FIELD.test(artifact.source) ||
-        ORDER_ROUTING_FALLBACK.test(artifact.source) ||
-        FIRST_ROW_ROUTING_FALLBACK.test(artifact.source))
+      INFERENCE_SURFACE.test(`${artifact.path}\n${source}`) &&
+      (hasForbiddenRoutingReference(artifact) ||
+        ORDER_ROUTING_FALLBACK.test(source) ||
+        COLLECTION_ROUTING_FALLBACK.test(source) ||
+        FIRST_ROW_ROUTING_FALLBACK.test(source))
     ) {
       violations.push({ kind: 'name_or_order_routing', path: artifact.path });
     }
     if (
       /['"]\/(?:clarity\/search|v1\/chat\/completions|v1\/models)(?:['"/?]|$)/u.test(
-        artifact.source,
+        source,
       )
     ) {
       violations.push({ kind: 'legacy_inference_route', path: artifact.path });
@@ -294,6 +441,24 @@ describe('Station has no local inference runtime', () => {
     });
   });
 
+  it('kills a direct Kaana endpoint exposed as TSX text', () => {
+    expect(
+      boundaryViolations(
+        [
+          {
+            path: 'apps/app/components/inference-help.tsx',
+            source: '<Text>https://kaana.ai/internal/v1/inference</Text>',
+          },
+        ],
+        [],
+        [],
+      ),
+    ).toContainEqual({
+      kind: 'direct_inference_endpoint',
+      path: 'apps/app/components/inference-help.tsx',
+    });
+  });
+
   it.each(['KAANA_SIGNING_SECRET', 'RELAY_API_URL', 'ALIA_PROVIDER_TOKEN', 'ALIA_OPENAI_API_KEY'])(
     'kills an internal inference credential mutant: %s',
     (environmentName) => {
@@ -307,12 +472,81 @@ describe('Station has no local inference runtime', () => {
     },
   );
 
+  it.each(['GEMINI_API_KEY', 'NVIDIA_API_KEY', 'HF_TOKEN', 'MODELSCOPE_API_KEY'])(
+    'kills a provider credential in a manifest or build script: %s',
+    (environmentName) => {
+      expect(
+        boundaryViolations(
+          [],
+          [],
+          [
+            {
+              path: 'package.json',
+              source: JSON.stringify({ scripts: { build: environmentName } }),
+            },
+          ],
+        ),
+      ).toContainEqual({ kind: 'provider_env', path: 'package.json' });
+    },
+  );
+
+  it('kills direct inference endpoints in deploy configuration without blocking Cloudflare Pages', () => {
+    expect(
+      boundaryViolations(
+        [],
+        [
+          {
+            path: '.github/workflows/deploy.yml',
+            source: 'https://api.cloudflare.com/client/v4/accounts/account/ai/run/model',
+          },
+        ],
+        [],
+      ),
+    ).toContainEqual({
+      kind: 'direct_inference_endpoint',
+      path: '.github/workflows/deploy.yml',
+    });
+    expect(
+      boundaryViolations(
+        [],
+        [
+          {
+            path: '.github/workflows/deploy.yml',
+            source: 'https://api.cloudflare.com/client/v4/accounts/account/pages/projects/station',
+          },
+        ],
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  it.each(['providerCredentials', 'inference_secrets', 'model_keys'])(
+    'kills a renamed provider credential store: %s',
+    (storageName) => {
+      expect(
+        boundaryViolations(
+          [{ path: 'apps/api/src/db/schema/inference.ts', source: `pgTable('${storageName}')` }],
+          [],
+          [],
+        ),
+      ).toContainEqual({
+        kind: 'provider_storage',
+        path: 'apps/api/src/db/schema/inference.ts',
+      });
+    },
+  );
+
   it.each([
     "const request = { provider: 'openai' };",
     "const request = { model: 'gpt-display-name' };",
     "const request = { routingProfileName: 'fast' };",
+    'const request = { model };',
+    "const request = { model_id: 'display-id' };",
+    'interface InferenceRequest { model?: string }',
+    'const selected = response.deploymentId;',
     'const request = { order: 1 };',
     'const selected = deployments.find((deployment) => deployment.name === wanted);',
+    'const selected = deployments.find((deployment) => deployment.id === wanted);',
     'const selected = deployments.sort((left, right) => left.priority - right.priority)[0];',
     'const selected = deployments.orderBy((deployment) => deployment.order)[0];',
     'const selected = deployments[0];',
@@ -339,6 +573,27 @@ describe('Station has no local inference runtime', () => {
     expect(
       boundaryViolations(
         [{ path: 'apps/api/src/lib/inference-client.ts', source }],
+        [],
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not treat historical source comments as executable inference wiring', () => {
+    expect(
+      boundaryViolations(
+        [
+          {
+            path: 'apps/api/src/lib/inference-boundary.ts',
+            source: [
+              '// import OpenAI from \'openai\';',
+              '// const request = { model: \'retired-name\' };',
+              '/* fetch(\'https://kaana.ai/internal/v1/inference\'); */',
+              '// OPENAI_API_KEY=retired',
+              'export const workspaceFeatureEnabled = true;',
+            ].join('\n'),
+          },
+        ],
         [],
         [],
       ),
@@ -383,8 +638,11 @@ describe('Station has no local inference runtime', () => {
       'Dockerfile',
       'apps/api/Dockerfile',
       'apps/api/docker-compose.postgres.yml',
+      'apps/api/build.ts',
+      'apps/api/drizzle.config.ts',
       'apps/app/app.json',
       'apps/app/eas.json',
+      'bunfig.toml',
       'sst.config.ts',
     );
     const manifestPaths = trackedFiles('package.json', 'apps/api/package.json', 'apps/app/package.json');

@@ -84,7 +84,7 @@ describe('the checked-in public surfaces describe routes that exist', () => {
       'utf8',
     );
 
-    expect(config).toContain('validateApiOrigin(process.env.EXPO_PUBLIC_API_URL, false)');
+    expect(config).toContain("process.env.NODE_ENV === 'production'");
     expect(config).not.toContain('api.station.oxy.so');
     expect(validator).toContain('EXPO_PUBLIC_API_URL is required');
     expect(validator).not.toContain('api.station.oxy.so');
