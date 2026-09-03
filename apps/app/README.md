@@ -12,7 +12,8 @@ bun run ios
 bun run android
 ```
 
-`EXPO_PUBLIC_API_URL` is required and must name the API origin for the build.
+`EXPO_PUBLIC_API_URL` is required and must name an HTTPS API origin for an
+export. Local development may use an explicit HTTP origin.
 There is no checked-in production fallback because no public Station API is
 currently deployed.
 

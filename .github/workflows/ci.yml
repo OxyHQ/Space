@@ -96,5 +96,5 @@ jobs:
 
       - name: Build web
         env:
-          EXPO_PUBLIC_API_URL: http://127.0.0.1:4001
+          EXPO_PUBLIC_API_URL: https://api.example.test
         run: bun run build:app

@@ -1,12 +1,13 @@
 # Deployment status
 
-Last verified: 2026-09-02.
+Last verified: 2026-09-03.
 
 ## Verified state
 
 - `station.oxy.so` and `api.station.oxy.so` do not currently resolve.
-- The repository workflow has deployed the frontend artifact to the
-  Cloudflare Pages project at `bd276987.oxystation.pages.dev`.
+- The repository workflow has deployed a frontend artifact to the Cloudflare
+  Pages project at `oxystation.pages.dev`. Exact immutable deployment URLs are
+  recorded by the corresponding GitHub Actions run.
 - There is no public Station API deployment. The web artifact therefore is not
   evidence of a working end-to-end production service.
 - The obsolete DigitalOcean and SST specifications were removed because they
@@ -17,9 +18,11 @@ Last verified: 2026-09-02.
 
 - The API requires `DATABASE_URL`, executes a real PostgreSQL query before
   listening, and uses only the Drizzle schema and migrations in this repo.
-- The frontend build requires an explicit `EXPO_PUBLIC_API_URL`. The Cloudflare
-  workflow reads it from the `STATION_API_URL` repository variable and fails if
-  it is absent; it never falls back to an invented production host.
+- The frontend export preflight requires an explicit HTTPS
+  `EXPO_PUBLIC_API_URL`. The Cloudflare workflow reads it from the
+  `STATION_API_URL` repository variable and fails before export when it is
+  missing or is not a valid HTTPS origin; it never falls back to an invented
+  production host.
 - Station deployment configuration contains no provider credentials, provider
   runtime, inference route, or MongoDB binding.
 

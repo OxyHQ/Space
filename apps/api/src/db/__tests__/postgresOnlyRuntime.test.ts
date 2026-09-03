@@ -70,9 +70,13 @@ describe('the Station runtime stays PostgreSQL-only', () => {
 });
 
 describe('the checked-in public surfaces describe routes that exist', () => {
-  it('requires an explicit API origin for every web build', () => {
+  it('has no implicit production API origin', () => {
     const config = readFileSync(
       resolve(REPOSITORY_ROOT, 'apps/app/lib/config.ts'),
+      'utf8',
+    );
+    const validator = readFileSync(
+      resolve(REPOSITORY_ROOT, 'apps/app/lib/api-origin.ts'),
       'utf8',
     );
     const deploy = readFileSync(
@@ -80,9 +84,12 @@ describe('the checked-in public surfaces describe routes that exist', () => {
       'utf8',
     );
 
-    expect(config).toContain("throw new Error('EXPO_PUBLIC_API_URL is required')");
+    expect(config).toContain('validateApiOrigin(process.env.EXPO_PUBLIC_API_URL, false)');
     expect(config).not.toContain('api.station.oxy.so');
+    expect(validator).toContain('EXPO_PUBLIC_API_URL is required');
+    expect(validator).not.toContain('api.station.oxy.so');
     expect(deploy).toContain('EXPO_PUBLIC_API_URL: ${{ vars.STATION_API_URL }}');
+    expect(deploy).toContain('bun run build:production');
     expect(deploy).not.toContain('api.station.oxy.so');
     expect(
       readFileSync(resolve(REPOSITORY_ROOT, 'apps/api/src/routes/share-links.ts'), 'utf8'),

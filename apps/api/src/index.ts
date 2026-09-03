@@ -215,7 +215,7 @@ getDb()
         log.general.info('HTTP server closed (no new connections)');
       });
 
-      // Give in-flight requests 30 seconds to complete (agent sessions can be long)
+      // Give in-flight workspace requests 30 seconds to complete.
       const forceTimeout = setTimeout(() => {
         log.general.error('Force exit after 30s grace period');
         process.exit(1);

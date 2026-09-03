@@ -15,9 +15,9 @@ Oxy Station has not been renamed to `main`. Branch from `master`, and target `ma
 - **PostgreSQL 17**, local or remote, to run the API and its real-database suite.
 - **Redis or Valkey**, optional. Caching falls back gracefully without it.
 
-Station's surviving provider runtime still has an environment-key fallback.
-Treat it as a frozen availability bridge: do not add providers or another key
-source. It is removed only after Hub AI routes through Alia -> Oxy -> Kaana.
+Station contains no inference provider runtime or provider-key store. One-shot
+AI operations belong on `Station -> Oxy -> Kaana`; conversations, memory,
+tools and agents belong on `Station -> Alia -> Oxy -> Kaana`.
 
 ## Setup
 
@@ -48,7 +48,7 @@ A bun workspaces monorepo. **Oxy Station uses `apps/`, not the `packages/` layou
 
 ## Vocabulary
 
-Oxy Station replaced a legacy AI chat product, and its code and copy carry the vocabulary of the new one. A **page** is a document, made of **blocks**, optionally a row in a **database**, rendered through a **view**, inside a **workspace** that has **members**. Do not reintroduce chat vocabulary (conversation, message, thread, persona, agent, skill, deep research, follow-up) in anything user facing. The provider routing layer under `apps/api/src/internal/providers/` is a survivor of that product, kept for a later phase; it is internal only and has no end-user model picker.
+Oxy Station replaced a legacy AI chat product, and its code and copy carry the vocabulary of the new one. A **page** is a document, made of **blocks**, optionally a row in a **database**, rendered through a **view**, inside a **workspace** that has **members**. Do not reintroduce chat vocabulary (conversation, message, thread, persona, agent, skill, deep research, follow-up) in anything user facing. Do not add provider routing, provider keys or an end-user model picker to Station.
 
 ## Tests
 

@@ -12,9 +12,10 @@ databases, comments, sharing, and real-time collaboration.
 
 Oxy sessions are handled by `@oxyhq/services` on the client and
 `@oxyhq/core/server` on the API. Station does not store provider credentials or
-run inference providers. Future workspace agent flows use
-`Station -> Alia -> Oxy -> Kaana`; provider credentials remain solely in
-Kaana's encrypted PostgreSQL store.
+run inference providers. One-shot product operations use
+`Station -> Oxy -> Kaana`; conversations, memory, tools and agents use
+`Station -> Alia -> Oxy -> Kaana`. Provider credentials remain solely in
+Kaana's encrypted PostgreSQL store, and Station never calls Kaana directly.
 
 ## Quick start
 
@@ -36,12 +37,13 @@ bun run --filter @oxystation/api test
 STATION_TEST_DATABASE_URL=postgres://station:station@127.0.0.1:5439/postgres \
   bun run --filter @oxystation/api test:pgdb
 bun run build:api
-EXPO_PUBLIC_API_URL=http://localhost:4001 bun run build:app
+EXPO_PUBLIC_API_URL=https://api.example.test bun run build:app
 ```
 
 The API requires `DATABASE_URL` and proves connectivity before listening. The
-app requires an explicit `EXPO_PUBLIC_API_URL`; no production API hostname is
-checked into the bundle.
+app requires an explicit HTTPS `EXPO_PUBLIC_API_URL` for export; no production
+API hostname is checked into the bundle. Local development may use an explicit
+HTTP origin.
 
 Current deployment facts and blockers are recorded in
 [`docs/deployment.md`](docs/deployment.md). Repository rules live in
