@@ -18,9 +18,10 @@ databases, comments, sharing, notifications, and real-time collaboration.
 - `@oxyhq/services` and `@oxyhq/core` — Oxy session identity.
 
 Station is PostgreSQL-only. It contains no provider adapters, provider-key
-store, model router, or inference endpoint. Agent flows belong to Alia and
-reach inference through Oxy and Kaana. Provider credentials live only in
-Kaana's encrypted PostgreSQL store.
+store, model router, or inference endpoint. One-shot product operations reach
+Kaana through Oxy. Conversations, memory, tools and agents belong to Alia and
+then reach Oxy and Kaana. Station never calls Kaana directly, and provider
+credentials live only in Kaana's encrypted PostgreSQL store.
 
 ## Start locally
 

@@ -9,9 +9,10 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "generate-sitemap": "bun scripts/generate-sitemap.ts",
+    "validate:api-origin": "bun scripts/validate-api-origin.ts",
     "prebuild": "bun run generate-sitemap",
-    "build": "bun x setup-skia-web public && bun x expo export --platform web",
-    "build:production": "NODE_ENV=production bun x setup-skia-web public && bun x expo export --platform web --clear",
+    "build": "bun run validate:api-origin && bun x setup-skia-web public && bun x expo export --platform web",
+    "build:production": "bun run validate:api-origin && NODE_ENV=production bun x setup-skia-web public && bun x expo export --platform web --clear",
     "build:android": "eas build --platform android",
     "build:ios": "eas build --platform ios"
   },

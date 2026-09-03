@@ -13,9 +13,8 @@ import {
 } from '../db/schema/databases.js';
 
 /**
- * Every query `src/routes/databases.ts` performs against the `Database` and
- * `DatabaseView` models, as typed functions. Nothing here is called yet — the
- * route still runs on Mongoose, and rewiring it is a separate change.
+ * Every query `src/routes/databases.ts` performs against the `databases` and
+ * `database_views` tables, as typed functions.
  *
  * ## What is deliberately NOT here
  *

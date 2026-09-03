@@ -27,7 +27,7 @@ jobs:
       - name: Build web
         env:
           EXPO_PUBLIC_API_URL: ${{ vars.STATION_API_URL }}
-        run: cd apps/app && bunx expo export --platform web
+        run: cd apps/app && bun run build:production
 
       # Idempotent, and deliberately not `|| true`: a 200 means the project is
       # there and this is a no-op, a 404 means create it, and ANY other status

@@ -19,12 +19,11 @@
  *
  * ## What is mocked, and what that costs
  *
- * Only the two middlewares, because both are still Mongoose: `authenticateToken`
- * calls Oxy, and `requireWorkspaceMember` reads the `Workspace` and
- * `WorkspaceMember` collections. Everything below them — routing, body parsing,
- * Zod, the handlers, the repositories, the driver, Postgres — is real. So this
- * file does NOT verify membership enforcement; it verifies what the handlers do
- * once a member is through the door.
+ * Only the two boundary middlewares: `authenticateToken` calls Oxy, and
+ * `requireWorkspaceMember` owns membership enforcement that is covered in its
+ * own suite. Everything below them — routing, body parsing, Zod, the handlers,
+ * the repositories, the driver, Postgres — is real. This file verifies what the
+ * handlers do once a member is through the door.
  *
  * Every row is scoped to a workspace this file creates, because one database is
  * shared with every other `*.pgdb.test.ts`.
@@ -47,9 +46,8 @@ import { blocks, pages } from '../../db/schema/pages.js';
 import { databases } from '../../db/schema/databases.js';
 import { workspaces } from '../../db/schema/workspaces.js';
 import { closeDb } from '../../db/client.js';
-// Type-only, and from the Mongoose model on purpose: that is the declaration
-// the `Express.Request` augmentation in `middleware/auth.ts` is written
-// against, so it is what `req.workspace.role` has to satisfy. `vi.mock`
+// Type-only, and from the PostgreSQL schema that owns the role declaration used
+// by the `Express.Request` augmentation in `middleware/auth.ts`. `vi.mock`
 // replaces a module at runtime and leaves its types alone.
 import type { WorkspaceRole } from '../../db/schema/workspaces.js';
 
