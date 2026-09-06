@@ -20,7 +20,7 @@
     "@expo/html-elements": "^0.13.8",
     "@expo/vector-icons": "^15.0.3",
     "@hugeicons/react-native": "^1.0.11",
-    "@oxyhq/bloom": "^0.85.0",
+    "@oxyhq/bloom": "^1.14.0",
     "@oxyhq/contracts": "^0.18.0",
     "@oxyhq/core": "^12.11.0",
     "@oxyhq/services": "^22.13.1",
